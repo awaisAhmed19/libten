@@ -1,0 +1,28 @@
+# Build outputs
+/build/
+/cmake-build-*/
+/out/
+
+# Generated compilation database
+/compile_commands.json
+
+# Local caches and tooling
+/.cache/
+/.vscode/
+/.idea/
+
+# Compiled artifacts
+*.o
+*.a
+*.so
+*.so.*
+*.dll
+*.dylib
+*.exe
+*.gcda
+*.gcno
+
+# Editor and OS files
+*~
+.DS_Store
+Thumbs.db
