@@ -118,6 +118,7 @@ do_build() {
 		-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 		-DCMAKE_COLOR_DIAGNOSTICS=ON \
 		-DBUILD_TESTING=ON \
+		-DENABLE_SANITIZERS="${ENABLE_SANITIZERS:-OFF}" \
 		"${cuda_args[@]}"
 
 	# Keep compile_commands.json in project root for clangd.

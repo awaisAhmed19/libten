@@ -25,7 +25,7 @@ const enum DataType promotion_table[DTYPE_COUNT][DTYPE_COUNT] = {
 const double PI =
     3.14159265358979323846264338327950288419716939937510582097494458734437321538295376117614603945866419742306;
 
-size_t ten_dtype_size(enum DataType dtype) {
+size_t T_get_dtype_size(enum DataType dtype) {
   switch (dtype) {
   case I8:
     return sizeof(int8_t);

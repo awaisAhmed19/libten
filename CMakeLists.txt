@@ -20,6 +20,25 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+option(ENABLE_SANITIZERS "Enable runtime sanitizers" OFF)
+
+if(ENABLE_SANITIZERS)
+  if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    set(TEN_SANITIZER_FLAGS
+        -fsanitize=undefined -fno-sanitize-recover=undefined
+        -fno-omit-frame-pointer)
+  else()
+    message(FATAL_ERROR "ENABLE_SANITIZERS requires GCC or Clang")
+  endif()
+endif()
+
+function(ten_enable_sanitizers target)
+  if(ENABLE_SANITIZERS)
+    target_compile_options(${target} PRIVATE ${TEN_SANITIZER_FLAGS})
+    target_link_options(${target} PRIVATE -fsanitize=undefined)
+  endif()
+endfunction()
+
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE
       Debug
@@ -80,6 +99,7 @@ endif()
 add_library(ten ${TEN_C_SOURCES})
 add_library(libten::ten ALIAS ten)
 
+ten_enable_sanitizers(ten)
 target_compile_features(ten PUBLIC c_std_11)
 
 target_include_directories(
@@ -130,7 +150,9 @@ if(BUILD_TESTING)
 
   if(TEN_TEST_SOURCES)
     add_executable(ten_tests ${TEN_TEST_SOURCES})
-
+    if(TARGET ten_tests)
+      ten_enable_sanitizers(ten_tests)
+    endif()
     target_compile_features(ten_tests PRIVATE c_std_11)
 
     target_include_directories(ten_tests
@@ -146,6 +168,9 @@ endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/basic_tensor.c")
   add_executable(ten_basic_example examples/basic_tensor.c)
+  if(TARGET ten_basic_example)
+    ten_enable_sanitizers(ten_basic_example)
+  endif()
 
   target_compile_features(ten_basic_example PRIVATE c_std_11)
   target_link_libraries(ten_basic_example PRIVATE libten::ten)

@@ -2,23 +2,17 @@
 #include "ten_types.h"
 
 #define TT_MAX_RANK 8
-struct tt_storage {
-  void *data; /* may be NULL only when nbytes == 0 */
-  size_t nbytes;
-  Device device;
-  uint32_t refcount;                      /* C11 <stdatomic.h> */
-  void (*free_fn)(void *data, void *ctx); /* NULL = borrowed, never freed */
-  void *free_ctx;
-  uint32_t magic; /* canary, cleared on free */
-};
+typedef struct Tensor Tensor;
 
-typedef struct {
-  struct tt_storage *storage; /* strong reference */
-  DataType dtype;
-  int32_t rank;
-  int64_t shape[TT_MAX_RANK];
-  int64_t strides[TT_MAX_RANK];
-  int64_t offset; /* elements */
-  int64_t numel;
-  uint32_t magic;
-} Tensor;
+extern u0 *T_allocate_tensor_data(size_t rows, size_t cols);
+extern bool T_is_shape_valid(const Tensor *t1,
+                             const Tensor *t2); /*
+                               1. this function checks if the number of
+                               shape array elements is less than TT_MAX_RANK
+                               TODO: need function for
+                               2. t1.shape == t2.shape for matmul
+                               3. shape compatible for broadcasting rules
+
+                                                 */
+
+extern i64 T_get_numel(const Tensor *t);
