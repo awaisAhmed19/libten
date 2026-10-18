@@ -2,6 +2,8 @@
 /build/
 /cmake-build-*/
 /out/
+/docs/BACKLOG.md
+/docs/Debug_Backlog
 
 # Generated compilation database
 /compile_commands.json

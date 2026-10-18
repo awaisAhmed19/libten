@@ -1,7 +1,9 @@
-#include "../../include/ten/ten_status.h"
-#include "../../include/ten/ten_types.h"
+#include "ten/ten_status.h"
+#include "ten/ten_types.h"
 #include <stdbool.h>
 #include <stddef.h>
+const double PI =
+    3.14159265358979323846264338327950288419716939937510582097494458734437321538295376117614603945866419742306;
 const enum DataType promotion_table[DTYPE_COUNT][DTYPE_COUNT] = {
     /*            I8    I16   I32   I64   U8    U16   U32   U64   F32   F64 C64
        C128 */
@@ -15,15 +17,12 @@ const enum DataType promotion_table[DTYPE_COUNT][DTYPE_COUNT] = {
     /* U32  */ {I64, I64, I64, I64, U32, U32, U32, U64, F32, F64, C64, C128},
     /* U64  */ {F64, F64, F64, F64, U64, U64, U64, U64, F64, F64, C64, C128},
 
-    /* F32  */ {F32, F32, F32, F32, F32, F32, F32, F32, F32, F64, C64, C128},
-    /* F64  */ {F64, F64, F64, F64, F64, F64, F64, F64, F64, F64, C64, C128},
+    /* F32  */ {F32, F32, F32, F64, F32, F32, F32, F64, F32, F64, C64, C128},
+    /* F64  */ {F64, F64, F64, F64, F64, F64, F64, F64, F64, F64, C128, C128},
 
     /* C64  */ {C64, C64, C64, C64, C64, C64, C64, C64, C64, C128, C64, C128},
     /* C128 */
-    {C128, C128, C128, C128, C128, C128, C128, C128, C128, C128, C64, C128}};
-
-const double PI =
-    3.14159265358979323846264338327950288419716939937510582097494458734437321538295376117614603945866419742306;
+    {C128, C128, C128, C128, C128, C128, C128, C128, C128, C128, C128, C128}};
 
 size_t T_get_dtype_size(enum DataType dtype) {
   switch (dtype) {
@@ -63,7 +62,7 @@ bool T_is_dtype_int(const enum DataType type) {
   return (type >= I8 && type <= U64);
 }
 bool T_is_dtype_sint(const enum DataType type) {
-  return (type >= I8 && type <= U8);
+  return (type >= I8 && type < U8);
 }
 bool T_is_dtype_float(const enum DataType type) {
   return (type == F32 || type == F64);

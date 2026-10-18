@@ -24,9 +24,8 @@ option(ENABLE_SANITIZERS "Enable runtime sanitizers" OFF)
 
 if(ENABLE_SANITIZERS)
   if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    set(TEN_SANITIZER_FLAGS
-        -fsanitize=undefined -fno-sanitize-recover=undefined
-        -fno-omit-frame-pointer)
+    set(TEN_SANITIZER_FLAGS -fsanitize=address,undefined
+                            -fno-sanitize-recover=all -fno-omit-frame-pointer)
   else()
     message(FATAL_ERROR "ENABLE_SANITIZERS requires GCC or Clang")
   endif()
@@ -35,7 +34,7 @@ endif()
 function(ten_enable_sanitizers target)
   if(ENABLE_SANITIZERS)
     target_compile_options(${target} PRIVATE ${TEN_SANITIZER_FLAGS})
-    target_link_options(${target} PRIVATE -fsanitize=undefined)
+    target_link_options(${target} PRIVATE -fsanitize=address,undefined)
   endif()
 endfunction()
 
@@ -145,24 +144,38 @@ else()
 endif()
 
 if(BUILD_TESTING)
-  file(GLOB TEN_TEST_SOURCES CONFIGURE_DEPENDS
-       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.c")
+  # Each white-box test includes tensor.c directly, so keep each test source in
+  # its own executable to avoid duplicate symbols and duplicate main().
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/tensor_helpers_test.c")
+    add_executable(ten_helpers_tests tests/tensor_helpers_test.c
+                                     src/core/ten_dtype.c)
+    ten_enable_sanitizers(ten_helpers_tests)
+    target_compile_features(ten_helpers_tests PRIVATE c_std_11)
+    target_include_directories(
+      ten_helpers_tests
+      PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include"
+              "${CMAKE_CURRENT_SOURCE_DIR}/src"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    add_test(NAME tensor_helpers COMMAND ten_helpers_tests)
+  endif()
 
-  if(TEN_TEST_SOURCES)
-    add_executable(ten_tests ${TEN_TEST_SOURCES})
-    if(TARGET ten_tests)
-      ten_enable_sanitizers(ten_tests)
-    endif()
-    target_compile_features(ten_tests PRIVATE c_std_11)
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/tensor_constructor_test.c")
+    add_executable(ten_constructor_tests tests/tensor_constructor_test.c
+                                         src/core/ten_dtype.c)
+    ten_enable_sanitizers(ten_constructor_tests)
+    target_compile_features(ten_constructor_tests PRIVATE c_std_11)
+    target_include_directories(
+      ten_constructor_tests
+      PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include"
+              "${CMAKE_CURRENT_SOURCE_DIR}/src"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    add_test(NAME tensor_constructor COMMAND ten_constructor_tests)
+  endif()
 
-    target_include_directories(ten_tests
-                               PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
-
-    target_link_libraries(ten_tests PRIVATE libten::ten)
-
-    add_test(NAME ten_tests COMMAND ten_tests)
-  else()
-    message(STATUS "No tests found yet under tests/test_*.c")
+  if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/tensor_helpers_test.c"
+     AND NOT EXISTS
+         "${CMAKE_CURRENT_SOURCE_DIR}/tests/tensor_constructor_test.c")
+    message(STATUS "No tensor tests found under tests/.")
   endif()
 endif()
 
