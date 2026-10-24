@@ -116,16 +116,18 @@ set_target_properties(
              POSITION_INDEPENDENT_CODE ON)
 
 if(TEN_CUDA_AVAILABLE)
+  # Enable CUDA runtime calls from C source files.
+  target_compile_definitions(ten PRIVATE USE_CUDA)
+
+  # Required by cudaMalloc, cudaMemcpy and cudaFree.
+  target_link_libraries(ten PRIVATE CUDA::cudart)
+
+  # CUDA kernels are optional; runtime allocation does not require .cu files.
   file(GLOB_RECURSE TEN_CUDA_SOURCES CONFIGURE_DEPENDS
        "${CMAKE_CURRENT_SOURCE_DIR}/src/cuda/*.cu")
 
   if(TEN_CUDA_SOURCES)
     target_sources(ten PRIVATE ${TEN_CUDA_SOURCES})
-
-    target_link_libraries(
-      ten
-      PUBLIC CUDA::cudart
-      PRIVATE CUDA::cublas)
 
     set_target_properties(
       ten
@@ -133,50 +135,39 @@ if(TEN_CUDA_AVAILABLE)
                  CUDA_STANDARD_REQUIRED ON
                  CUDA_SEPARABLE_COMPILATION ON
                  CUDA_RESOLVE_DEVICE_SYMBOLS ON)
-
-    message(STATUS "libten backend: CPU + CUDA")
-  else()
-    set(TEN_CUDA_AVAILABLE OFF)
-    message(STATUS "No CUDA sources found. libten backend: CPU")
   endif()
+
+  message(STATUS "libten backend: CPU + CUDA runtime")
 else()
-  message(STATUS "libten backend: CPU")
+  message(STATUS "libten backend: CPU only")
 endif()
 
 if(BUILD_TESTING)
-  # Each white-box test includes tensor.c directly, so keep each test source in
-  # its own executable to avoid duplicate symbols and duplicate main().
-  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/tensor_helpers_test.c")
-    add_executable(ten_helpers_tests tests/tensor_helpers_test.c
-                                     src/core/ten_dtype.c)
-    ten_enable_sanitizers(ten_helpers_tests)
-    target_compile_features(ten_helpers_tests PRIVATE c_std_11)
-    target_include_directories(
-      ten_helpers_tests
-      PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include"
-              "${CMAKE_CURRENT_SOURCE_DIR}/src"
-              "${CMAKE_CURRENT_SOURCE_DIR}/tests")
-    add_test(NAME tensor_helpers COMMAND ten_helpers_tests)
-  endif()
+  # Each white-box test includes tensor.c directly. Build each test in its own
+  # executable to avoid duplicate symbols and main().
+  function(ten_add_whitebox_test test_name source_file)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/${source_file}")
+      set(target_name "ten_${test_name}_tests")
 
-  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/tensor_constructor_test.c")
-    add_executable(ten_constructor_tests tests/tensor_constructor_test.c
-                                         src/core/ten_dtype.c)
-    ten_enable_sanitizers(ten_constructor_tests)
-    target_compile_features(ten_constructor_tests PRIVATE c_std_11)
-    target_include_directories(
-      ten_constructor_tests
-      PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include"
-              "${CMAKE_CURRENT_SOURCE_DIR}/src"
-              "${CMAKE_CURRENT_SOURCE_DIR}/tests")
-    add_test(NAME tensor_constructor COMMAND ten_constructor_tests)
-  endif()
+      add_executable(${target_name} "tests/${source_file}" src/core/ten_dtype.c)
 
-  if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/tensor_helpers_test.c"
-     AND NOT EXISTS
-         "${CMAKE_CURRENT_SOURCE_DIR}/tests/tensor_constructor_test.c")
-    message(STATUS "No tensor tests found under tests/.")
-  endif()
+      ten_enable_sanitizers(${target_name})
+
+      target_compile_features(${target_name} PRIVATE c_std_11)
+
+      target_include_directories(
+        ${target_name}
+        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include"
+                "${CMAKE_CURRENT_SOURCE_DIR}/src"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+
+      add_test(NAME "${test_name}" COMMAND ${target_name})
+    endif()
+  endfunction()
+
+  ten_add_whitebox_test(helpers tensor_helpers_test.c)
+  ten_add_whitebox_test(constructor tensor_constructor_test.c)
+  ten_add_whitebox_test(share_storage tensor_share_storage_test.c)
 endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/basic_tensor.c")

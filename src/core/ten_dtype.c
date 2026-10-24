@@ -74,8 +74,12 @@ bool T_is_dtype_complex(const enum DataType type) {
   return (type == C64 || type == C128);
 }
 
-Ten_Status T_get_dtype(const enum DataType a, const enum DataType b,
-                       enum DataType *out) {
+bool T_is_dtype_valid(const enum DataType type) {
+  return (type >= I8 && type <= C128);
+}
+
+Ten_Status T_get_implied_dtype(const enum DataType a, const enum DataType b,
+                               enum DataType *out) {
   if (out == NULL)
     return (Ten_Status){.stype = TT_ERR_INVALID_ARG,
                         .msg = "Output datatype pointer is NULL"};

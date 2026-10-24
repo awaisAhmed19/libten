@@ -45,7 +45,7 @@ typedef void u0;
 typedef float f32;
 typedef double f64;
 
-enum DevType { CPU = 0, CUDA };
+enum DevType { CPU = 0, CUDA = 1 };
 
 typedef enum RangeStatus {
   RNG_OK = 0,
@@ -117,7 +117,7 @@ extern bool T_is_dtype_int(const enum DataType type);
 extern bool T_is_dtype_float(const enum DataType type);
 extern bool T_is_dtype_uint(const enum DataType type);
 extern bool T_is_dtype_complex(const enum DataType type);
-
+extern bool T_is_dtype_valid(const enum DataType type);
 extern RangeStatus T_checked_add_size(size_t a, size_t b, size_t *out);
 extern RangeStatus T_checked_mul_size(size_t a, size_t b, size_t *out);
 
