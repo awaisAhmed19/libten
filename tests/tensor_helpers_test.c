@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../src/core/tensor.c"
+#include "../src/core/ten_tensor.c"
 
 static int tests_run;
 

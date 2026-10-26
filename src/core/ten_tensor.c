@@ -26,6 +26,15 @@ typedef struct Tensor {
   i64 num_el;
 } Tensor;
 
+typedef struct TensorView {
+  struct TensorStorage *storage;
+  i32 rank;
+  DataType dtype;
+  i64 *shape;
+  i64 *strides;
+  i64 offset;
+} TensorView;
+
 bool T_is_ranks_valid(const i32 ranks) {
   return 0 <= ranks && ranks <= TT_MAX_RANK;
 }
@@ -90,9 +99,6 @@ i32 T_get_rank(const Tensor *t) {
   return t->rank;
 }
 
-/* Copies the tensor shape into caller-provided storage.
- * Returns false if the tensor is invalid or capacity is insufficient.
- */
 bool T_get_shape(const Tensor *t, i64 *shape_out, i32 capacity) {
   if (t == NULL) {
     fprintf(stderr, "ERR: invalid input tensor pointer to get shape");
@@ -550,4 +556,239 @@ bool T_tensor_share_storage(Tensor *dst, TensorStorage *storage,
   tmp.storage = storage;
   *dst = tmp;
   return true;
+}
+
+bool T_tensor_ones(Tensor *t, const DataType dtype, const i64 *shape,
+                   const i32 rank, const Device dev) {
+  if (t == NULL)
+    return false;
+
+  if (t->storage != NULL || t->shape != NULL || t->strides != NULL)
+    return false;
+
+  if (!T_is_ranks_valid(rank) || !T_is_shape_input_valid(shape, rank)) {
+    fprintf(stderr, "ERR: invalid tensor rank or shape\n");
+    return false;
+  }
+
+  size_t dt_size = T_get_dtype_size(dtype);
+  if (dt_size == 0)
+    return false;
+
+  /* This implementation supports CPU storage only. */
+  if (dev.devtype != CPU)
+    return false;
+
+  Tensor tmp = {0};
+  tmp.rank = rank;
+  tmp.offset = 0;
+
+  if (!T_get_numel(rank, shape, &tmp.num_el)) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  if ((size_t)tmp.num_el > SIZE_MAX / dt_size) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  size_t n_bytes = dt_size * (size_t)tmp.num_el;
+
+  if (!allocate_shape(&tmp, shape, rank)) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  if (!allocate_strides(&tmp)) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  if (!calculate_strides(tmp.strides, tmp.shape, tmp.rank)) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  tmp.storage = calloc(1, sizeof(*tmp.storage));
+  if (tmp.storage == NULL) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  if (!storage_allocate((void **)&tmp.storage->data, dev, n_bytes)) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  if (n_bytes > 0)
+    memset(tmp.storage->data, 1, n_bytes);
+
+  tmp.storage->n_bytes = n_bytes;
+  tmp.storage->dtype = dtype;
+  tmp.storage->device = dev;
+  tmp.storage->ref_count = 1;
+
+  *t = tmp;
+  return true;
+
+  // fail:
+  //   release_tensor(&tmp);
+  //   return false;
+}
+bool T_tensor_zero(Tensor *t, const DataType dtype, const i64 *shape,
+                   const i32 rank, const Device dev) {
+  if (t == NULL)
+    return false;
+
+  if (t->storage != NULL || t->shape != NULL || t->strides != NULL)
+    return false;
+
+  if (!T_is_ranks_valid(rank) || !T_is_shape_input_valid(shape, rank)) {
+    fprintf(stderr, "ERR: invalid tensor rank or shape\n");
+    return false;
+  }
+
+  size_t dt_size = T_get_dtype_size(dtype);
+  if (dt_size == 0)
+    return false;
+
+  /* This implementation supports CPU storage only. */
+  if (dev.devtype != CPU)
+    return false;
+
+  Tensor tmp = {0};
+  tmp.rank = rank;
+  tmp.offset = 0;
+
+  if (!T_get_numel(rank, shape, &tmp.num_el)) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  if ((size_t)tmp.num_el > SIZE_MAX / dt_size) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  size_t n_bytes = dt_size * (size_t)tmp.num_el;
+
+  if (!allocate_shape(&tmp, shape, rank)) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  if (!allocate_strides(&tmp)) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  if (!calculate_strides(tmp.strides, tmp.shape, tmp.rank)) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  tmp.storage = calloc(1, sizeof(*tmp.storage));
+  if (tmp.storage == NULL) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  if (!storage_allocate((void **)&tmp.storage->data, dev, n_bytes)) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  if (n_bytes > 0)
+    memset(tmp.storage->data, 0, n_bytes);
+
+  tmp.storage->n_bytes = n_bytes;
+  tmp.storage->dtype = dtype;
+  tmp.storage->device = dev;
+  tmp.storage->ref_count = 1;
+
+  *t = tmp;
+  return true;
+
+  // fail:
+  //   release_tensor(&tmp);
+  //   return false;
+}
+bool T_tensor_fill(Tensor *t, const DataType dtype, const i64 *shape,
+                   const i32 rank, const Device dev, const void *scalar) {
+  if (t == NULL)
+    return false;
+
+  if (t->storage != NULL || t->shape != NULL || t->strides != NULL)
+    return false;
+
+  if (!T_is_ranks_valid(rank) || !T_is_shape_input_valid(shape, rank)) {
+    fprintf(stderr, "ERR: invalid tensor rank or shape\n");
+    return false;
+  }
+
+  size_t dt_size = T_get_dtype_size(dtype);
+  if (dt_size == 0)
+    return false;
+
+  /* This implementation supports CPU storage only. */
+  if (dev.devtype != CPU)
+    return false;
+
+  Tensor tmp = {0};
+  tmp.rank = rank;
+  tmp.offset = 0;
+
+  if (!T_get_numel(rank, shape, &tmp.num_el)) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  if ((size_t)tmp.num_el > SIZE_MAX / dt_size) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  size_t n_bytes = dt_size * (size_t)tmp.num_el;
+
+  if (!allocate_shape(&tmp, shape, rank)) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  if (!allocate_strides(&tmp)) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  if (!calculate_strides(tmp.strides, tmp.shape, tmp.rank)) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  tmp.storage = calloc(1, sizeof(*tmp.storage));
+  if (tmp.storage == NULL) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  if (!storage_allocate((void **)&tmp.storage->data, dev, n_bytes)) {
+    release_tensor(&tmp);
+    return false;
+  }
+
+  for (size_t i = 0; i < (size_t)tmp.num_el; ++i) {
+    memcpy((unsigned char *)tmp.storage->data + i * dt_size, scalar, dt_size);
+  }
+  tmp.storage->n_bytes = n_bytes;
+  tmp.storage->dtype = dtype;
+  tmp.storage->device = dev;
+  tmp.storage->ref_count = 1;
+
+  *t = tmp;
+  return true;
+
+  // fail:
+  //   release_tensor(&tmp);
+  //   return false;
 }

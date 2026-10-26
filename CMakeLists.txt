@@ -128,7 +128,7 @@ if(TEN_CUDA_AVAILABLE)
 
   if(TEN_CUDA_SOURCES)
     target_sources(ten PRIVATE ${TEN_CUDA_SOURCES})
-
+    target_link_libraries(ten PRIVATE CUDA::cublas)
     set_target_properties(
       ten
       PROPERTIES CUDA_STANDARD 17
@@ -168,6 +168,9 @@ if(BUILD_TESTING)
   ten_add_whitebox_test(helpers tensor_helpers_test.c)
   ten_add_whitebox_test(constructor tensor_constructor_test.c)
   ten_add_whitebox_test(share_storage tensor_share_storage_test.c)
+  ten_add_whitebox_test(shape tensor_share_test.c)
+  ten_add_whitebox_test(tensor tensor_test.c)
+  ten_add_whitebox_test(checked tensor_checked_test.c)
 endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/basic_tensor.c")
