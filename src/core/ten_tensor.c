@@ -1,4 +1,5 @@
 #include "ten/ten_tensor.h"
+#include "internal/ten_tensor.h"
 #include "ten/ten_status.h"
 #include "ten/ten_types.h"
 #include <stdio.h>
@@ -7,34 +8,7 @@
 #ifdef USE_CUDA
 #include <cuda_runtime_api.h>
 #endif
-struct TensorStorage {
-  u0 *data; /* may be NULL only when n_bytes == 0 */
-  size_t n_bytes;
-  u32 ref_count; // TODO:u32 ref_count is not thread-safe. eventual
-                 // support for concurrent access, need to consider an atomic
-                 // reference count or explicitly document that reference
-                 // management is not thread-safe.
-  Device device;
-  DataType dtype;
-};
 
-typedef struct Tensor {
-  struct TensorStorage *storage;
-  i32 rank;
-  i64 *shape;
-  i64 *strides;
-  i64 offset; /* elements */
-  i64 num_el;
-} Tensor;
-
-typedef struct TensorView {
-  struct TensorStorage *storage;
-  i32 rank;
-  DataType dtype;
-  i64 *shape;
-  i64 *strides;
-  i64 offset;
-} TensorView;
 typedef enum { FILL_FROM_SCALAR, FILL_ONES, FILL_ZEROS } FillMode;
 
 static bool fill_by_value(void *data, const void *scalar, const DataType dtype,
@@ -328,8 +302,8 @@ void T_storage_release(TensorStorage **storage) {
   }
 }
 
-static Ten_Status validate_new_tensor(const Tensor *t, DataType dtype,
-                                      const i64 *shape, i32 rank, Device dev) {
+Ten_Status validate_new_tensor(const Tensor *t, DataType dtype,
+                               const i64 *shape, i32 rank, Device dev) {
   if (t == NULL)
     return (Ten_Status){TT_ERR_INVALID_ARG, "tensor is NULL"};
 
@@ -626,7 +600,28 @@ Ten_Status T_tensor_share_storage(Tensor *dst, TensorStorage *storage,
 
   return status_ok();
 }
+bool T_is_contiguous(const Tensor *t) {
+  if (t == NULL)
+    return false;
 
+  if (t->num_el == 0)
+    return true;
+
+  i64 expected_stride = 1;
+
+  for (i32 i = t->rank - 1; i >= 0; --i) {
+
+    if (t->shape[i] == 1)
+      continue;
+
+    if (t->strides[i] != expected_stride)
+      return false;
+
+    expected_stride *= t->shape[i];
+  }
+
+  return true;
+}
 Ten_Status T_create_tensor_by_data(Tensor *t, const void *input_data,
                                    const DataType i_dtype, const i64 *i_shape,
                                    const i32 i_ranks, const Device dev) {

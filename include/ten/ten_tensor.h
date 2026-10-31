@@ -13,6 +13,7 @@ extern "C" {
 #define TT_MAX_RANK 8
 typedef struct Tensor Tensor;
 typedef struct TensorStorage TensorStorage;
+typedef struct TensorView TensorView;
 
 /*
  * Validation

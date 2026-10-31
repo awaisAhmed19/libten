@@ -1,0 +1,300 @@
+#include "internal/ten_tensor.h"
+#include "ten/ten_tensor.h"
+#include <string.h>
+
+/*Alright. Let's narrow the discussion to the relationship between `tt_tensor`,
+`tt_storage`, and `tt_view`, particularly how a tensor view should represent a
+different interpretation of existing memory.
+
+Your proposed design has a good separation of responsibilities:
+
+- `tt_tensor` is the owning/reference-counted tensor handle.
+- `tt_storage` represents the underlying allocation and its lifetime.
+- `tt_view` is a lightweight, non-owning descriptor suitable for passing to
+CPU/CUDA kernels.
+
+The important distinction is that a tensor view and a kernel view are not
+necessarily the same thing.
+
+## 1. Your `tt_tensor` design
+
+I like the fixed-size metadata arrays:
+
+```
+typedef struct tt_tensor {
+    struct tt_storage *storage;
+
+    tt_dtype dtype;
+    int32_t rank;
+
+    int64_t shape[TT_MAX_RANK];
+    int64_t strides[TT_MAX_RANK];
+
+    int64_t offset;   elements
+int64_t numel;
+
+uint32_t magic;
+}
+tt_tensor;
+```
+
+Compared with your previous dynamically allocated `shape` and `strides`, this
+has several advantages:
+
+- No separate allocations for tensor metadata.
+- Creating views becomes simpler.
+- Destroying a tensor only needs to release storage.
+- Copying metadata becomes straightforward.
+- No shape/stride allocation failures during view creation.
+
+The trade-off is that every tensor occupies more memory, even scalars and
+low-rank tensors. With `TT_MAX_RANK = 8`, I think that's reasonable.
+
+One important rule: copying this struct with ordinary assignment must not be
+treated as creating a valid independent tensor. The storage reference count must
+be retained.
+
+## 2. The `tt_view` design
+
+Your proposed descriptor:
+
+```
+typedef struct tt_view {
+  void *data; /* already includes the offset
+
+int32_t rank;
+int32_t dtype;
+
+int64_t shape[TT_MAX_RANK];
+int64_t strides[TT_MAX_RANK];
+}
+tt_view;
+```
+
+            This is a good kernel -
+            facing representation.
+
+            Notice the distinction :
+
+        | Property | `tt_tensor` | `tt_view` | |
+        -- -- -- -- -- -- -- -- -- -- -- -- --| -- -- -- -- -- -|
+        -- -- -- -- -- -- -- -| | Storage ownership | Yes | No | |
+        Reference counting | Indirectly | No | | Offset | Explicit |
+        Already applied | | Shape | Yes | Yes | | Strides | Yes | Yes | |
+        Dtype | Yes | Yes | | Device allocation lifetime | Managed |
+        Caller - managed |
+
+        I would keep this distinction.
+
+        ## #Why apply the offset
+    ?
+
+    Consider a contiguous tensor
+    :
+
+``` Shape : [ 3, 4 ] Strides : [ 4, 1 ] Offset : 0
+```
+
+                                After slicing :
+
+``` Shape : [ 2, 4 ] Strides : [ 4, 1 ] Offset : 4
+```
+
+                                The kernel -
+                                facing pointer becomes :
+
+``` view.data = (char *)storage->data + offset * dtype_size;
+```
+
+    The kernel doesn't need to know about the original storage offset.
+
+    For an element at logical coordinates `[i, j]`:
+
+``` element_address = view.data + i * view.strides[0] * dtype_size +
+                       j * view.strides[1] * dtype_size;
+```
+
+This is clean for both CPU and CUDA.
+
+## 3. One important issue: pointer arithmetic
+
+I would not calculate the adjusted pointer using `void *` arithmetic.
+
+Use:
+
+```
+static void *tt_storage_offset_ptr(
+    void *data,
+    int64_t offset,
+    size_t dtype_size
+) {
+  return (unsigned char *)data + (size_t)offset * dtype_size;
+}
+```
+
+    Of course,
+    validate multiplication overflow and storage bounds before doing this.
+
+    Also,
+    empty tensors need special treatment
+    : their data pointer may legitimately be `NULL`,
+      so don't perform pointer arithmetic on it.
+
+      ##4. The most important design decision : mutability
+
+                                                    Suppose :
+
+``` tt_tensor a;
+tt_tensor b;
+
+tt_tensor_slice(&b, &a, ...);
+```
+
+    Both tensors reference the same storage.
+
+    Now :
+
+``` tt_tensor_fill(&b, ...);
+```
+
+    Should this modify `a`
+    ?
+
+    My recommendation
+    : yes.
+
+      Views should share memory,
+    and mutations should be visible through all aliases.
+
+    However,
+    this introduces a distinction between :
+
+    -Logical tensor ownership.-
+            Physical storage ownership.-
+            Data mutation
+                .
+
+            The reference count only handles lifetime
+                .It does not provide synchronization or prevent conflicting
+                    writes
+                .
+
+            I would document that concurrent mutation through aliases requires
+                external synchronization
+                .
+
+            ##5. Questions I'd settle before implementation
+
+            There are three decisions worth making before we design the
+                individual view functions
+                .
+
+            A.Negative strides
+
+                Should slicing support reversed dimensions immediately
+        ?
+
+        Example
+        :
+
+``` Original : [ 1, 2, 3, 4, 5 ] Reversed
+    : [ 5, 4, 3, 2, 1 ]
+
+      stride = -1 offset =
+          4
+```
+
+              I'd defer negative strides for the first implementation.
+
+              B.Zero strides
+
+                  Should broadcasting be represented through zero strides
+              ?
+
+              Example
+              :
+
+``` Original : [ 1, 2, 3 ]
+
+                Broadcast : [ 1, 2, 3 ][1, 2, 3][1, 2, 3]
+
+                            Shape : [ 3, 3 ] Strides
+    : [ 0, 1 ]
+```
+
+      I'd support zero strides, but treat broadcast views as read-only
+initially.
+
+      C.Reshape
+
+          Should `reshape`:
+
+      1. Only succeed when the new shape can be represented without
+          copying.2. Automatically materialize a contiguous copy when necessary.
+
+      My recommendation is to separate these operations :
+
+``` tt_status
+      tt_tensor_reshape_view(...);
+tt_status tt_tensor_reshape(...);
+```
+
+The first guarantees no copy. The second can eventually implement copy fallback.
+
+My proposed direction: keep `tt_tensor` as the lifetime-owning descriptor,
+`tt_view` as the lightweight kernel descriptor, and make all view
+transformations metadata-only operations.
+
+I'd like to settle negative strides, zero strides, and reshape semantics before
+writing the public Views API. Those decisions influence almost every function in
+this module.
+ * */
+typedef struct TensorView {
+  void *data;
+  i32 rank;
+  DataType dtype;
+  i64 *shape;
+  i64 *strides;
+} TensorView;
+
+Ten_Status T_create_tensor_view(TensorView *tv, const Tensor *t) {
+
+  if (tv == NULL || t == NULL)
+    return (Ten_Status){TT_ERR_INVALID_ARG, "null argument"};
+
+  if (tv->data != NULL || tv->rank != 0)
+    return (Ten_Status){TT_ERR_INVALID_STATE,
+                        "destination tensorview is not empty"};
+
+  if (t->storage == NULL)
+    return (Ten_Status){TT_ERR_INVALID_STATE, "source tensor has no storage"};
+
+  if (!T_is_ranks_valid(t->rank) ||
+      !T_is_shape_input_valid(t->shape, t->rank) || t->strides == NULL)
+    return (Ten_Status){TT_ERR_INVALID_ARG, "invalid source tensor metadata"};
+
+  size_t dtype_size = T_get_dtype_size(t->storage->dtype);
+
+  if (dtype_size == 0)
+    return (Ten_Status){TT_ERR_DTYPE_UNSUPPORTED, "unsupported source dtype"};
+
+  if (t->storage->device.devtype != CPU)
+    return (Ten_Status){TT_ERR_UNSUPPORTED, "device backend unavailable"};
+
+  TensorView tmp_view = {0};
+
+  if (t->storage->data != NULL) {
+    tmp_view.data =
+        (unsigned char *)t->storage->data + (size_t)t->offset * dtype_size;
+  }
+
+  tmp_view.rank = t->rank;
+  tmp_view.dtype = t->storage->dtype;
+
+  memcpy(tmp_view.shape, t->shape, (size_t)t->rank * sizeof(*t->shape));
+  memcpy(tmp_view.strides, t->strides, (size_t)t->rank * sizeof(*t->strides));
+
+  *tv = tmp_view;
+
+  return (Ten_Status){TT_OK, "success"};
+}
