@@ -34,7 +34,6 @@ size_t get_dtype_size(DataType dtype) {
 
 #define CPU_DEVICE ((Device){.devtype = CPU, .id = 0})
 static int tests_run;
-
 #define CHECK(expr)                                                            \
   do {                                                                         \
     ++tests_run;                                                               \
@@ -44,12 +43,27 @@ static int tests_run;
     }                                                                          \
   } while (0)
 
+#define CHECK_STATUS(expr, expected)                                           \
+  do {                                                                         \
+    Ten_Status status_check = (expr);                                          \
+    ++tests_run;                                                               \
+    if (status_check.stype != (expected)) {                                    \
+      fprintf(stderr, "FAIL %s:%d: expected status %d, got %d (%s)\n",         \
+              __FILE__, __LINE__, (expected), status_check.stype,              \
+              status_check.msg ? status_check.msg : "no message");             \
+      return 1;                                                                \
+    }                                                                          \
+  } while (0)
+
+static Device cpu_device(void) { return (Device){.devtype = CPU, .id = 0}; }
+
 static int test_constructs_and_copies_data(void) {
   const i64 shape[] = {2, 3};
   float input[] = {1, 2, 3, 4, 5, 6};
   Tensor t = {0};
 
-  CHECK(T_create_tensor_by_data(&t, input, F32, shape, 2, CPU_DEVICE));
+  CHECK_STATUS(T_create_tensor_by_data(&t, input, F32, shape, 2, CPU_DEVICE),
+               TT_OK);
   CHECK(t.rank == 2 && t.num_el == 6 && t.offset == 0);
   CHECK(t.shape[0] == 2 && t.shape[1] == 3);
   CHECK(t.strides[0] == 3 && t.strides[1] == 1);
@@ -71,13 +85,16 @@ static int test_scalar_and_empty_tensors(void) {
   Tensor s = {0};
   Tensor e = {0};
 
-  CHECK(T_create_tensor_by_data(&s, &scalar, F32, NULL, 0, CPU_DEVICE));
+  CHECK_STATUS(T_create_tensor_by_data(&s, &scalar, F32, NULL, 0, CPU_DEVICE),
+               TT_OK);
   CHECK(s.rank == 0 && s.num_el == 1);
   CHECK(s.shape == NULL && s.strides == NULL);
   CHECK(*(float *)s.storage->data == 42.0f);
   T_destroy_tensor(&s);
 
-  CHECK(T_create_tensor_by_data(&e, NULL, F32, empty_shape, 3, CPU_DEVICE));
+  CHECK_STATUS(
+      T_create_tensor_by_data(&e, NULL, F32, empty_shape, 3, CPU_DEVICE),
+      TT_OK);
   CHECK(e.rank == 3 && e.num_el == 0);
   CHECK(e.storage != NULL && e.storage->n_bytes == 0);
   CHECK(e.shape[0] == 2 && e.shape[1] == 0 && e.shape[2] == 4);
@@ -90,11 +107,16 @@ static int test_invalid_construction_is_transactional(void) {
   const float values[] = {1, 2};
   Tensor t = {0};
 
-  CHECK(!T_create_tensor_by_data(NULL, values, F32, negative, 2, CPU_DEVICE));
-  CHECK(!T_create_tensor_by_data(&t, values, F32, negative, 2, CPU_DEVICE));
+  CHECK_STATUS(
+      T_create_tensor_by_data(NULL, values, F32, negative, 2, CPU_DEVICE),
+      TT_ERR_INVALID_ARG);
+  CHECK_STATUS(
+      T_create_tensor_by_data(&t, values, F32, negative, 2, CPU_DEVICE),
+      TT_ERR_INVALID_ARG);
   CHECK(t.storage == NULL && t.shape == NULL && t.strides == NULL);
-  CHECK(
-      !T_create_tensor_by_data(&t, NULL, F32, (const i64[]){2}, 1, CPU_DEVICE));
+  CHECK_STATUS(
+      T_create_tensor_by_data(&t, NULL, F32, (const i64[]){2}, 1, CPU_DEVICE),
+      TT_ERR_INVALID_ARG);
   CHECK(t.storage == NULL && t.shape == NULL && t.strides == NULL);
   return 0;
 }
@@ -105,10 +127,11 @@ static int test_shared_storage_lifetime(void) {
   TensorStorage *storage = NULL;
   Tensor view = {0};
 
-  CHECK(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
-                                sizeof(values)));
+  CHECK_STATUS(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
+                                       sizeof(values)),
+               TT_OK);
   CHECK(storage->ref_count == 1);
-  CHECK(T_tensor_share_storage(&view, storage, shape, 2));
+  CHECK_STATUS(T_tensor_share_storage(&view, storage, shape, 2), TT_OK);
   CHECK(view.storage == storage && storage->ref_count == 2);
   CHECK(view.shape[0] == 2 && view.shape[1] == 2);
   CHECK(view.strides[0] == 2 && view.strides[1] == 1);

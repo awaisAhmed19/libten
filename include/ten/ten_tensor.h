@@ -3,6 +3,7 @@
 #ifndef TEN_TENSOR_H
 #define TEN_TENSOR_H
 
+#include "ten_status.h"
 #include "ten_types.h"
 
 #ifdef __cplusplus
@@ -10,7 +11,6 @@ extern "C" {
 #endif
 
 #define TT_MAX_RANK 8
-
 typedef struct Tensor Tensor;
 typedef struct TensorStorage TensorStorage;
 
@@ -23,6 +23,11 @@ extern bool T_is_ranks_valid(i32 ranks);
 
 /* Validates shape pointer, dimensions, rank, and element-count overflow. */
 extern bool T_is_shape_input_valid(const i64 *input_shape, i32 ranks);
+
+extern Ten_Status T_create_tensor_storage(TensorStorage **ts,
+                                          const void *input_data,
+                                          DataType dtype, Device dev,
+                                          size_t n_bytes);
 
 /*
  * Construction
@@ -39,9 +44,9 @@ extern bool T_is_shape_input_valid(const i64 *input_shape, i32 ranks);
  * On success, t owns its storage reference and metadata.
  * On failure, t remains empty.
  */
-extern bool T_create_tensor_by_data(Tensor *t, const void *input_data,
-                                    DataType dtype, const i64 *shape, i32 rank,
-                                    Device device);
+extern Ten_Status T_create_tensor_by_data(Tensor *t, const void *input_data,
+                                          DataType dtype, const i64 *shape,
+                                          i32 rank, Device device);
 
 /*
  * Creates a tensor sharing an existing storage allocation.
@@ -51,11 +56,11 @@ extern bool T_create_tensor_by_data(Tensor *t, const void *input_data,
  * On success, dst owns its storage reference and metadata.
  * On failure, dst remains empty.
  */
-extern bool T_tensor_share_storage(Tensor *dst, TensorStorage *storage,
-                                   const i64 *shape, i32 rank);
+extern Ten_Status T_tensor_share_storage(Tensor *dst, TensorStorage *storage,
+                                         const i64 *shape, i32 rank);
 
 /* Creates a deep copy with independent storage. */
-extern bool T_clone(Tensor *dst, const Tensor *src);
+extern Ten_Status T_clone(Tensor *dst, const Tensor *src);
 
 /*
  * Lifetime

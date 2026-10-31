@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../include/ten/ten_status.h"
 #include "../src/core/ten_tensor.c"
 
 static int tests_run;
@@ -22,6 +23,25 @@ static int tests_run;
     }                                                                          \
   } while (0)
 
+#define CHECK_STATUS(expr, expected)                                           \
+  do {                                                                         \
+    Ten_Status status_check = (expr);                                          \
+    ++tests_run;                                                               \
+    if (status_check.stype != (expected)) {                                    \
+      fprintf(stderr, "FAIL %s:%d: expected status %d, got %d (%s)\n",         \
+              __FILE__, __LINE__, (expected), status_check.stype,              \
+              status_check.msg ? status_check.msg : "no message");             \
+      return 1;                                                                \
+    }                                                                          \
+  } while (0)
+
+static Device cpu_device(void) { return (Device){.devtype = CPU, .id = 0}; }
+
+static int tensor_is_empty(const Tensor *t) {
+  return t != NULL && t->storage == NULL && t->shape == NULL &&
+         t->strides == NULL && t->rank == 0 && t->offset == 0 && t->num_el == 0;
+}
+
 #define CPU_DEVICE ((Device){.devtype = CPU, .id = 0})
 
 static int test_rejects_null_arguments(void) {
@@ -30,12 +50,16 @@ static int test_rejects_null_arguments(void) {
   TensorStorage *storage = NULL;
   Tensor dst = {0};
 
-  CHECK(!T_tensor_share_storage(NULL, NULL, shape, 1));
-  CHECK(!T_tensor_share_storage(&dst, NULL, shape, 1));
+  CHECK_STATUS(T_tensor_share_storage(NULL, NULL, shape, 1),
+               TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_share_storage(&dst, NULL, shape, 1),
+               TT_ERR_INVALID_ARG);
 
-  CHECK(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
-                                sizeof(values)));
-  CHECK(!T_tensor_share_storage(NULL, storage, shape, 1));
+  CHECK_STATUS(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
+                                       sizeof(values)),
+               TT_OK);
+  CHECK_STATUS(T_tensor_share_storage(NULL, storage, shape, 1),
+               TT_ERR_INVALID_ARG);
 
   T_storage_release(&storage);
   CHECK(storage == NULL);
@@ -48,11 +72,12 @@ static int test_shares_storage_and_copies_metadata(void) {
   TensorStorage *storage = NULL;
   Tensor dst = {0};
 
-  CHECK(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
-                                sizeof(values)));
+  CHECK_STATUS(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
+                                       sizeof(values)),
+               TT_OK);
   CHECK(storage->ref_count == 1);
 
-  CHECK(T_tensor_share_storage(&dst, storage, shape, 2));
+  CHECK_STATUS(T_tensor_share_storage(&dst, storage, shape, 2), TT_OK);
 
   CHECK(dst.storage == storage);
   CHECK(storage->ref_count == 2);
@@ -75,6 +100,7 @@ static int test_shares_storage_and_copies_metadata(void) {
   CHECK(((float *)dst.storage->data)[5] == 6.0f);
 
   T_destroy_tensor(&dst);
+  CHECK(tensor_is_empty(&dst));
   CHECK(dst.storage == NULL);
   CHECK(dst.shape == NULL);
   CHECK(dst.strides == NULL);
@@ -87,9 +113,11 @@ static int test_rejects_insufficient_storage_capacity(void) {
   TensorStorage *storage = NULL;
   Tensor dst = {0};
 
-  CHECK(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
-                                sizeof(values)));
-  CHECK(!T_tensor_share_storage(&dst, storage, too_large, 2));
+  CHECK_STATUS(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
+                                       sizeof(values)),
+               TT_OK);
+  CHECK_STATUS(T_tensor_share_storage(&dst, storage, too_large, 2),
+               TT_ERR_OUT_OF_RANGE);
   CHECK(dst.storage == NULL);
   CHECK(dst.shape == NULL);
   CHECK(dst.strides == NULL);
@@ -107,12 +135,17 @@ static int test_rejects_invalid_shapes_without_retaining(void) {
   TensorStorage *storage = NULL;
   Tensor dst = {0};
 
-  CHECK(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
-                                sizeof(values)));
-  CHECK(!T_tensor_share_storage(&dst, storage, negative, 2));
-  CHECK(!T_tensor_share_storage(&dst, storage, overflow, 2));
-  CHECK(!T_tensor_share_storage(&dst, storage, NULL, 1));
-  CHECK(!T_tensor_share_storage(&dst, storage, valid_shape, -1));
+  CHECK_STATUS(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
+                                       sizeof(values)),
+               TT_OK);
+  CHECK_STATUS(T_tensor_share_storage(&dst, storage, negative, 2),
+               TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_share_storage(&dst, storage, overflow, 2),
+               TT_ERR_OVERFLOW);
+  CHECK_STATUS(T_tensor_share_storage(&dst, storage, NULL, 1),
+               TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_share_storage(&dst, storage, valid_shape, -1),
+               TT_ERR_INVALID_ARG);
   CHECK(storage->ref_count == 1);
   CHECK(dst.storage == NULL);
 
@@ -125,9 +158,10 @@ static int test_scalar_tensor(void) {
   TensorStorage *storage = NULL;
   Tensor dst = {0};
 
-  CHECK(T_create_tensor_storage(&storage, &value, F32, CPU_DEVICE,
-                                sizeof(value)));
-  CHECK(T_tensor_share_storage(&dst, storage, NULL, 0));
+  CHECK_STATUS(
+      T_create_tensor_storage(&storage, &value, F32, CPU_DEVICE, sizeof(value)),
+      TT_OK);
+  CHECK_STATUS(T_tensor_share_storage(&dst, storage, NULL, 0), TT_OK);
   CHECK(dst.rank == 0);
   CHECK(dst.num_el == 1);
   CHECK(dst.offset == 0);
@@ -137,6 +171,7 @@ static int test_scalar_tensor(void) {
   CHECK(storage->ref_count == 2);
 
   T_destroy_tensor(&dst);
+  CHECK(tensor_is_empty(&dst));
   CHECK(storage->ref_count == 1);
   T_storage_release(&storage);
   return 0;
@@ -147,8 +182,9 @@ static int test_empty_tensor(void) {
   TensorStorage *storage = NULL;
   Tensor dst = {0};
 
-  CHECK(T_create_tensor_storage(&storage, NULL, F32, CPU_DEVICE, 0));
-  CHECK(T_tensor_share_storage(&dst, storage, shape, 3));
+  CHECK_STATUS(T_create_tensor_storage(&storage, NULL, F32, CPU_DEVICE, 0),
+               TT_OK);
+  CHECK_STATUS(T_tensor_share_storage(&dst, storage, shape, 3), TT_OK);
   CHECK(dst.rank == 3);
   CHECK(dst.num_el == 0);
   CHECK(dst.shape[0] == 2 && dst.shape[1] == 0 && dst.shape[2] == 4);
@@ -157,6 +193,7 @@ static int test_empty_tensor(void) {
   CHECK(storage->ref_count == 2);
 
   T_destroy_tensor(&dst);
+  CHECK(tensor_is_empty(&dst));
   T_storage_release(&storage);
   return 0;
 }
@@ -167,14 +204,42 @@ static int test_rejects_nonempty_destination(void) {
   TensorStorage *storage = NULL;
   Tensor dst = {0};
 
-  CHECK(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
-                                sizeof(values)));
-  CHECK(T_tensor_share_storage(&dst, storage, shape, 1));
-  CHECK(!T_tensor_share_storage(&dst, storage, shape, 1));
+  CHECK_STATUS(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
+                                       sizeof(values)),
+               TT_OK);
+  CHECK_STATUS(T_tensor_share_storage(&dst, storage, shape, 1), TT_OK);
+  CHECK_STATUS(T_tensor_share_storage(&dst, storage, shape, 1),
+               TT_ERR_INVALID_STATE);
   CHECK(storage->ref_count == 2);
 
   T_destroy_tensor(&dst);
   T_storage_release(&storage);
+  return 0;
+}
+static int test_rejects_reference_count_overflow(void) {
+  const float values[] = {1.0f, 2.0f};
+  const i64 shape[] = {2};
+  TensorStorage *storage = NULL;
+  Tensor dst = {0};
+
+  CHECK_STATUS(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
+                                       sizeof(values)),
+               TT_OK);
+
+  storage->ref_count = UINT32_MAX;
+
+  CHECK_STATUS(T_tensor_share_storage(&dst, storage, shape, 1),
+               TT_ERR_INVALID_STATE);
+
+  CHECK(dst.storage == NULL);
+  CHECK(dst.shape == NULL);
+  CHECK(dst.strides == NULL);
+  CHECK(storage->ref_count == UINT32_MAX);
+
+  /* Restore a valid count before releasing the storage. */
+  storage->ref_count = 1;
+  T_storage_release(&storage);
+
   return 0;
 }
 
@@ -183,7 +248,8 @@ int main(void) {
       test_shares_storage_and_copies_metadata() ||
       test_rejects_insufficient_storage_capacity() ||
       test_rejects_invalid_shapes_without_retaining() || test_scalar_tensor() ||
-      test_empty_tensor() || test_rejects_nonempty_destination()) {
+      test_empty_tensor() || test_rejects_nonempty_destination() ||
+      test_rejects_reference_count_overflow()) {
     return EXIT_FAILURE;
   }
 

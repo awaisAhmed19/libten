@@ -1,5 +1,5 @@
 #pragma once
-
+#include <stdio.h>
 enum Ten_StatusType {
   TT_OK = 0,
   TT_ERR_INVALID_ARG = 1, /* null pointer, bad rank, negative dim, bad axis */
@@ -20,5 +20,20 @@ enum Ten_StatusType {
 
 typedef struct {
   enum Ten_StatusType stype;
-  char *msg;
+  const char *msg;
 } Ten_Status;
+
+static Ten_Status status_ok(void) { return (Ten_Status){TT_OK, NULL}; }
+static Ten_Status status_error(enum Ten_StatusType type, const char *msg) {
+  return (Ten_Status){type, msg};
+}
+static inline void print_status_at(Ten_Status status, const char *file,
+                                   int line) {
+  if (status.stype == TT_OK)
+    return;
+
+  fprintf(stderr, "ERR: %s:%d: %s\n", file, line,
+          status.msg ? status.msg : "Unknown error");
+}
+
+#define T_PRINT_STATUS(status) print_status_at((status), __FILE__, __LINE__)
