@@ -136,15 +136,17 @@ size_t T_get_nbytes(const Tensor *t) {
   return t->storage->n_bytes;
 }
 
-static bool allocate_shape(Tensor *t, const i64 *shape, i32 ranks) {
+bool T_allocate_shape(Tensor *t, const i64 *shape, i32 ranks) {
   if (t == NULL)
     return false;
 
   if (ranks < 0 || ranks > TT_MAX_RANK)
     return false;
 
-  if (!T_is_shape_input_valid(shape, ranks))
-    return false;
+  if (ranks > 0 && shape != NULL) {
+    if (!T_is_shape_input_valid(shape, ranks))
+      return false;
+  }
   // A scalar has rank zero and no shape array.
   t->rank = ranks;
   t->shape = NULL;
@@ -156,13 +158,14 @@ static bool allocate_shape(Tensor *t, const i64 *shape, i32 ranks) {
     fprintf(stderr, "ERR: shapes allocation failed");
     return false;
   }
-
-  memcpy(t->shape, shape, (size_t)ranks * sizeof(*t->shape));
+  if (shape != NULL) {
+    memcpy(t->shape, shape, (size_t)ranks * sizeof(*t->shape));
+  }
 
   return true;
 }
 
-static bool allocate_strides(Tensor *t) {
+bool T_allocate_stride(Tensor *t) {
   if (t == NULL || !T_is_ranks_valid(t->rank)) {
     return false;
   }
@@ -177,7 +180,7 @@ static bool allocate_strides(Tensor *t) {
   return t->strides != NULL;
 }
 
-static bool calculate_strides(i64 *strides, const i64 *shape, i32 rank) {
+bool T_calculate_strides(i64 *strides, const i64 *shape, i32 rank) {
   if (!T_is_ranks_valid(rank))
     return false;
 
@@ -302,8 +305,8 @@ void T_storage_release(TensorStorage **storage) {
   }
 }
 
-Ten_Status validate_new_tensor(const Tensor *t, DataType dtype,
-                               const i64 *shape, i32 rank, Device dev) {
+Ten_Status T_validate_new_tensor(const Tensor *t, DataType dtype,
+                                 const i64 *shape, i32 rank, Device dev) {
   if (t == NULL)
     return (Ten_Status){TT_ERR_INVALID_ARG, "tensor is NULL"};
 
@@ -399,7 +402,7 @@ static Ten_Status tensor_create_initialized(Tensor *t, DataType dtype,
                                             Device dev, FillMode mode,
                                             const void *scalar) {
   /* 1. Validate arguments and destination state. */
-  Ten_Status status = validate_new_tensor(t, dtype, shape, rank, dev);
+  Ten_Status status = T_validate_new_tensor(t, dtype, shape, rank, dev);
 
   if (status.stype != TT_OK)
     return status;
@@ -429,17 +432,17 @@ static Ten_Status tensor_create_initialized(Tensor *t, DataType dtype,
   size_t n_bytes = (size_t)tmp.num_el * dt_size;
 
   /* 3. Allocate shape and strides. */
-  if (!allocate_shape(&tmp, shape, rank)) {
+  if (!T_allocate_shape(&tmp, shape, rank)) {
     release_tensor(&tmp);
     return (Ten_Status){TT_ERR_NO_MEMORY, "shape allocation failed"};
   }
 
-  if (!allocate_strides(&tmp)) {
+  if (!T_allocate_stride(&tmp)) {
     release_tensor(&tmp);
     return (Ten_Status){TT_ERR_NO_MEMORY, "stride allocation failed"};
   }
 
-  if (!calculate_strides(tmp.strides, tmp.shape, tmp.rank)) {
+  if (!T_calculate_strides(tmp.strides, tmp.shape, tmp.rank)) {
     release_tensor(&tmp);
     return (Ten_Status){TT_ERR_OVERFLOW, "stride calculation failed"};
   }
@@ -525,6 +528,162 @@ Ten_Status T_create_tensor_storage(TensorStorage **ts, const void *input_data,
 
   return status_ok();
 }
+Ten_Status T_create_empty_storage(TensorStorage **storage, DataType dtype,
+                                  Device device, size_t n_bytes) {
+  if (storage == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "storage pointer is NULL");
+
+  if (*storage != NULL)
+    return status_error(TT_ERR_INVALID_STATE, "storage is already initialized");
+
+  if (!T_is_dtype_valid(dtype))
+    return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported dtype");
+
+  size_t dtype_size = T_get_dtype_size(dtype);
+
+  if (dtype_size == 0)
+    return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported dtype");
+
+  if (n_bytes % dtype_size != 0)
+    return status_error(TT_ERR_INVALID_ARG,
+                        "storage size is not dtype aligned");
+
+  TensorStorage *tmp = calloc(1, sizeof(*tmp));
+
+  if (tmp == NULL)
+    return status_error(TT_ERR_NO_MEMORY, "storage metadata allocation failed");
+
+  if (!storage_allocate((void **)&tmp->data, device, n_bytes)) {
+    free(tmp);
+    return status_error(TT_ERR_NO_MEMORY, "storage data allocation failed");
+  }
+
+  tmp->n_bytes = n_bytes;
+  tmp->dtype = dtype;
+  tmp->device = device;
+  tmp->ref_count = 1;
+
+  *storage = tmp;
+
+  return status_ok();
+}
+
+Ten_Status T_copy_tensor_data(TensorStorage *dst, const Tensor *src) {
+  if (dst == NULL || src == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "source or destination is NULL");
+
+  if (src->storage == NULL)
+    return status_error(TT_ERR_INVALID_STATE, "source has no storage");
+
+  if (!T_is_dtype_valid(src->storage->dtype))
+    return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported source dtype");
+
+  if (dst->dtype != src->storage->dtype)
+    return status_error(TT_ERR_DTYPE_MISMATCH, "storage dtype mismatch");
+
+  if (dst->device.devtype != CPU || src->storage->device.devtype != CPU)
+    return status_error(TT_ERR_UNSUPPORTED, "CPU copy backend only");
+
+  if (!T_is_ranks_valid(src->rank) ||
+      !T_is_shape_input_valid(src->shape, src->rank))
+    return status_error(TT_ERR_INVALID_ARG, "invalid source shape");
+
+  if (src->rank > 0 && src->strides == NULL)
+    return status_error(TT_ERR_INVALID_STATE, "source strides are NULL");
+
+  if (src->num_el < 0 || src->offset < 0)
+    return status_error(TT_ERR_INVALID_ARG, "invalid source metadata");
+
+  size_t dtype_size = T_get_dtype_size(src->storage->dtype);
+
+  if (dtype_size == 0)
+    return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported dtype");
+
+  i64 expected_numel;
+
+  if (!T_get_numel(src->rank, src->shape, &expected_numel))
+    return status_error(TT_ERR_OVERFLOW, "source element count overflow");
+
+  if (expected_numel != src->num_el)
+    return status_error(TT_ERR_INVALID_STATE, "source element count mismatch");
+
+  if ((uint64_t)src->num_el > SIZE_MAX / dtype_size)
+    return status_error(TT_ERR_OVERFLOW, "copy byte size overflow");
+
+  size_t required_bytes = (size_t)src->num_el * dtype_size;
+
+  if (dst->n_bytes < required_bytes)
+    return status_error(TT_ERR_OUT_OF_RANGE,
+                        "destination storage is too small");
+
+  if (required_bytes == 0)
+    return status_ok();
+
+  if (src->storage->data == NULL || dst->data == NULL)
+    return status_error(TT_ERR_INVALID_STATE,
+                        "source or destination data is NULL");
+
+  if (src->storage->n_bytes % dtype_size != 0)
+    return status_error(TT_ERR_INVALID_STATE, "invalid source storage size");
+
+  size_t storage_elements = src->storage->n_bytes / dtype_size;
+
+  /*
+   * Validate the maximum source element index.
+   * Negative strides are not supported here.
+   */
+  i64 max_index = src->offset;
+
+  for (i32 i = 0; i < src->rank; ++i) {
+    if (src->strides[i] < 0)
+      return status_error(TT_ERR_UNSUPPORTED,
+                          "negative strides are unsupported");
+
+    if (src->shape[i] <= 0)
+      return status_error(TT_ERR_INVALID_STATE,
+                          "invalid non-empty tensor shape");
+
+    i64 extent = src->shape[i] - 1;
+
+    if (src->strides[i] != 0 &&
+        extent > (I64_MAX - max_index) / src->strides[i])
+      return status_error(TT_ERR_OVERFLOW, "source offset overflow");
+
+    max_index += extent * src->strides[i];
+  }
+
+  if ((uint64_t)max_index >= storage_elements)
+    return status_error(TT_ERR_OUT_OF_RANGE,
+                        "source tensor exceeds storage bounds");
+
+  /*
+   * Copy elements in logical row-major order.
+   */
+  const unsigned char *src_data = (const unsigned char *)src->storage->data;
+
+  unsigned char *dst_data = (unsigned char *)dst->data;
+
+  for (i64 linear = 0; linear < src->num_el; ++linear) {
+
+    i64 remaining = linear;
+    i64 src_index = src->offset;
+
+    /*
+     * Decode the logical linear index into coordinates.
+     */
+    for (i32 d = src->rank - 1; d >= 0; --d) {
+      i64 coord = remaining % src->shape[d];
+      remaining /= src->shape[d];
+
+      src_index += coord * src->strides[d];
+    }
+
+    memcpy(dst_data + (size_t)linear * dtype_size,
+           src_data + (size_t)src_index * dtype_size, dtype_size);
+  }
+
+  return status_ok();
+}
 
 Ten_Status T_tensor_share_storage(Tensor *dst, TensorStorage *storage,
                                   const i64 *input_shape, const i32 rank) {
@@ -575,17 +734,17 @@ Ten_Status T_tensor_share_storage(Tensor *dst, TensorStorage *storage,
   if (required_bytes > 0 && storage->data == NULL)
     return status_error(TT_ERR_INVALID_STATE, "storage data is NULL");
 
-  if (!allocate_shape(&tmp, input_shape, rank)) {
+  if (!T_allocate_shape(&tmp, input_shape, rank)) {
     release_tensor(&tmp);
     return status_error(TT_ERR_NO_MEMORY, "shape allocation failed");
   }
 
-  if (!allocate_strides(&tmp)) {
+  if (!T_allocate_stride(&tmp)) {
     release_tensor(&tmp);
     return status_error(TT_ERR_NO_MEMORY, "stride allocation failed");
   }
 
-  if (!calculate_strides(tmp.strides, tmp.shape, tmp.rank)) {
+  if (!T_calculate_strides(tmp.strides, tmp.shape, tmp.rank)) {
     release_tensor(&tmp);
     return status_error(TT_ERR_OVERFLOW, "stride calculation failed");
   }
@@ -600,6 +759,7 @@ Ten_Status T_tensor_share_storage(Tensor *dst, TensorStorage *storage,
 
   return status_ok();
 }
+
 bool T_is_contiguous(const Tensor *t) {
   if (t == NULL)
     return false;
@@ -622,10 +782,11 @@ bool T_is_contiguous(const Tensor *t) {
 
   return true;
 }
+
 Ten_Status T_create_tensor_by_data(Tensor *t, const void *input_data,
                                    const DataType i_dtype, const i64 *i_shape,
                                    const i32 i_ranks, const Device dev) {
-  Ten_Status status = validate_new_tensor(t, i_dtype, i_shape, i_ranks, dev);
+  Ten_Status status = T_validate_new_tensor(t, i_dtype, i_shape, i_ranks, dev);
   if (status.stype != TT_OK)
     return status;
 
@@ -649,17 +810,17 @@ Ten_Status T_create_tensor_by_data(Tensor *t, const void *input_data,
   if (n_bytes > 0 && input_data == NULL)
     return status_error(TT_ERR_INVALID_ARG, "input data is NULL");
 
-  if (!allocate_shape(&tmp, i_shape, i_ranks)) {
+  if (!T_allocate_shape(&tmp, i_shape, i_ranks)) {
     release_tensor(&tmp);
     return status_error(TT_ERR_NO_MEMORY, "shape allocation failed");
   }
 
-  if (!allocate_strides(&tmp)) {
+  if (!T_allocate_stride(&tmp)) {
     release_tensor(&tmp);
     return status_error(TT_ERR_NO_MEMORY, "stride allocation failed");
   }
 
-  if (!calculate_strides(tmp.strides, tmp.shape, tmp.rank)) {
+  if (!T_calculate_strides(tmp.strides, tmp.shape, tmp.rank)) {
     release_tensor(&tmp);
     return status_error(TT_ERR_OVERFLOW, "stride calculation failed");
   }
@@ -698,12 +859,12 @@ Ten_Status T_clone(Tensor *dst, const Tensor *src) {
   tmp.offset = src->offset;
   tmp.num_el = src->num_el;
 
-  if (!allocate_shape(&tmp, src->shape, src->rank)) {
+  if (!T_allocate_shape(&tmp, src->shape, src->rank)) {
     release_tensor(&tmp);
     return status_error(TT_ERR_NO_MEMORY, "shape allocation failed");
   }
 
-  if (!allocate_strides(&tmp)) {
+  if (!T_allocate_stride(&tmp)) {
     release_tensor(&tmp);
     return status_error(TT_ERR_NO_MEMORY, "stride allocation failed");
   }
@@ -729,6 +890,92 @@ Ten_Status T_clone(Tensor *dst, const Tensor *src) {
   return status_ok();
 }
 
+Ten_Status T_tensor_reshape(Tensor *dst, const Tensor *src, const i64 *shape,
+                            i32 rank) {
+  if (dst == NULL || src == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "source or destination is NULL");
+
+  if (dst->storage != NULL || dst->shape != NULL || dst->strides != NULL)
+    return status_error(TT_ERR_INVALID_STATE,
+                        "destination tensor is not empty");
+
+  if (src->storage == NULL)
+    return status_error(TT_ERR_INVALID_STATE, "source tensor has no storage");
+
+  if (!T_is_ranks_valid(src->rank) ||
+      !T_is_shape_input_valid(src->shape, src->rank))
+    return status_error(TT_ERR_INVALID_ARG, "invalid source tensor shape");
+
+  if (src->rank > 0 && src->strides == NULL)
+    return status_error(TT_ERR_INVALID_STATE, "source strides are NULL");
+
+  if (!T_is_ranks_valid(rank) || !T_is_shape_input_valid(shape, rank))
+    return status_error(TT_ERR_INVALID_ARG, "invalid destination shape");
+
+  i64 new_numel;
+
+  if (!T_get_numel(rank, shape, &new_numel))
+    return status_error(TT_ERR_OVERFLOW, "invalid shape");
+
+  if (new_numel != src->num_el)
+    return status_error(TT_ERR_INVALID_ARG, "reshape element count mismatch");
+
+  if (src->num_el < 0 || src->offset < 0)
+    return status_error(TT_ERR_INVALID_ARG, "invalid source metadata");
+
+  if (!T_is_dtype_valid(src->storage->dtype))
+    return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported dtype");
+
+  size_t dtype_size = T_get_dtype_size(src->storage->dtype);
+
+  if (dtype_size == 0)
+    return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported dtype");
+
+  if ((uint64_t)new_numel > SIZE_MAX / dtype_size)
+    return status_error(TT_ERR_OVERFLOW, "reshape byte size overflow");
+
+  size_t n_bytes = (size_t)new_numel * dtype_size;
+
+  Tensor tmp = {0};
+
+  tmp.rank = rank;
+  tmp.num_el = new_numel;
+  tmp.offset = 0;
+
+  /* Allocate destination metadata. */
+
+  if (!T_allocate_shape(&tmp, shape, rank)) {
+    release_tensor(&tmp);
+    return status_error(TT_ERR_NO_MEMORY, "shape allocation failed");
+  }
+
+  if (!T_allocate_stride(&tmp)) {
+    release_tensor(&tmp);
+    return status_error(TT_ERR_NO_MEMORY, "stride allocation failed");
+  }
+
+  if (!T_calculate_strides(tmp.strides, tmp.shape, tmp.rank)) {
+    release_tensor(&tmp);
+    return status_error(TT_ERR_INVALID_STATE, "stride calculation failed");
+  }
+
+  Ten_Status status = T_create_empty_storage(&tmp.storage, src->storage->dtype,
+                                             src->storage->device, n_bytes);
+
+  if (status.stype != TT_OK) {
+    release_tensor(&tmp);
+    return status;
+  }
+
+  if (T_copy_tensor_data(tmp.storage, src).stype != TT_OK) {
+    release_tensor(&tmp);
+    return status;
+  }
+
+  *dst = tmp;
+
+  return status_ok();
+}
 static bool fill_by_value(void *data, const void *scalar, const DataType dtype,
                           const i64 numel) {
   if (numel < 0 || scalar == NULL || (numel > 0 && data == NULL))

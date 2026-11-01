@@ -180,7 +180,7 @@ tt_tensor_slice(&b, &a, ...);
                 .
 
             I would document that concurrent mutation through aliases requires
-                external synchronization
+                al synchronization
                 .
 
             ##5. Questions I'd settle before implementation
@@ -249,7 +249,27 @@ I'd like to settle negative strides, zero strides, and reshape semantics before
 writing the public Views API. Those decisions influence almost every function in
 this module.
  * */
+bool T_is_permutation(const i64 *dims, i32 rank) {
+  if (rank < 0 || rank > TT_MAX_RANK)
+    return false;
 
+  if (rank > 0 && dims == NULL)
+    return false;
+
+  bool seen[TT_MAX_RANK] = {false};
+
+  for (i32 i = 0; i < rank; ++i) {
+    if (dims[i] < 0 || dims[i] >= rank)
+      return false;
+
+    if (seen[dims[i]])
+      return false;
+
+    seen[dims[i]] = true;
+  }
+
+  return true;
+}
 bool T_validate_tensor_bounds(const Tensor *t) {
   if (t == NULL || t->storage == NULL)
     return false;
@@ -353,4 +373,453 @@ Ten_Status T_create_tensor_view(TensorView *tv, const Tensor *t) {
   *tv = tmp_view;
 
   return (Ten_Status){TT_OK, "success"};
+}
+
+Ten_Status T_tensor_transpose(Tensor *dst, const Tensor *src, i32 dim0,
+                              i32 dim1) {
+  Ten_Status status = T_validate_new_tensor(
+      dst, src->storage->dtype, src->shape, src->rank, src->storage->device);
+  if (status.stype != TT_OK)
+    return status;
+
+  Tensor tmp = {0};
+  tmp.rank = src->rank;
+  tmp.offset = src->offset;
+
+  if (!T_get_numel(src->rank, src->shape, &tmp.num_el))
+    return status_error(TT_ERR_OVERFLOW,
+                        "invalid shape or element count overflow");
+
+  if (!T_is_dtype_valid(src->storage->dtype))
+    return status_error(TT_ERR_INVALID_ARG, "invalid datatype");
+
+  if (src->storage->device.devtype != CPU)
+    return status_error(TT_ERR_INVALID_ARG, "unsupported device args");
+
+  if (src->storage->data == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "input data is NULL");
+
+  if (!T_allocate_shape(&tmp, src->shape, src->rank)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_NO_MEMORY, "shape allocation failed");
+  }
+
+  if (!T_allocate_stride(&tmp)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_NO_MEMORY, "stride allocation failed");
+  }
+  if (dim0 < 0 || dim1 < 0 || dim0 >= src->rank || dim1 >= src->rank) {
+    return status_error(TT_ERR_INVALID_ARG, "invalid transpose dimensions");
+  }
+  for (i64 i = 0; i < src->rank; ++i) {
+    tmp.shape[i] = src->shape[i];
+    tmp.strides[i] = src->strides[i];
+  }
+
+  tmp.shape[dim0] = src->shape[dim1];
+  tmp.shape[dim1] = src->shape[dim0];
+
+  tmp.strides[dim0] = src->strides[dim1];
+  tmp.strides[dim1] = src->strides[dim0];
+
+  if (!T_storage_retain(src->storage)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_INVALID_STATE, "storage retain failed");
+  }
+
+  tmp.storage = src->storage;
+
+  *dst = tmp;
+  return status_ok();
+}
+
+/* Permute dimensions according to the supplied ordering. */
+Ten_Status T_tensor_permute(Tensor *dst, const Tensor *src, const i64 *dims,
+                            i32 rank) {
+  Ten_Status status = T_validate_new_tensor(
+      dst, src->storage->dtype, src->shape, src->rank, src->storage->device);
+  if (status.stype != TT_OK)
+    return status;
+
+  Tensor tmp = {0};
+  tmp.rank = src->rank;
+  tmp.offset = src->offset;
+  tmp.num_el = src->num_el;
+
+  if (!T_is_dtype_valid(src->storage->dtype))
+    return status_error(TT_ERR_INVALID_ARG, "invalid datatype");
+
+  if (src->storage->device.devtype != CPU)
+    return status_error(TT_ERR_INVALID_ARG, "unsupported device args");
+
+  if (src->storage->n_bytes > 0 && src->storage->data == NULL) {
+    return status_error(TT_ERR_INVALID_ARG, "input data is NULL");
+  }
+
+  if (!T_allocate_shape(&tmp, src->shape, src->rank)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_NO_MEMORY, "shape allocation failed");
+  }
+
+  if (!T_allocate_stride(&tmp)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_NO_MEMORY, "stride allocation failed");
+  }
+
+  if (rank != src->rank) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_INVALID_ARG,
+                        "input rank and src rank must match");
+  }
+
+  if (!T_is_shape_input_valid(dims, rank)) {
+    return status_error(TT_ERR_INVALID_ARG, "invalid Permute dimensions");
+  }
+  if (!T_is_permutation(dims, rank)) {
+    return status_error(TT_ERR_INVALID_ARG,
+                        "invalid Permute dimensions dims not seen in shape");
+  }
+  for (i64 i = 0; i < src->rank; ++i) {
+    tmp.shape[i] = src->shape[dims[i]];
+    tmp.strides[i] = src->strides[dims[i]];
+  }
+
+  if (!T_storage_retain(src->storage)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_INVALID_STATE, "storage retain failed");
+  }
+
+  tmp.storage = src->storage;
+
+  *dst = tmp;
+  return status_ok();
+}
+
+/* Remove dimensions of size 1. */
+Ten_Status T_tensor_squeeze(Tensor *dst, const Tensor *src) {
+
+  Ten_Status status = T_validate_new_tensor(
+      dst, src->storage->dtype, src->shape, src->rank, src->storage->device);
+  if (status.stype != TT_OK)
+    return status;
+
+  if (!T_is_dtype_valid(src->storage->dtype))
+    return status_error(TT_ERR_INVALID_ARG, "invalid datatype");
+
+  i32 count_ones = 0;
+  for (i32 i = 0; i < src->rank; ++i) {
+    if (src->shape[i] == 1)
+      count_ones++;
+  }
+
+  Tensor tmp = {0};
+  tmp.rank = src->rank - count_ones;
+  tmp.offset = src->offset;
+  tmp.num_el = src->num_el;
+
+  if (!T_is_ranks_valid(tmp.rank))
+    return status_error(TT_ERR_INVALID_ARG, "invalid resulting rank");
+
+  if (src->storage->n_bytes > 0 && src->storage->data == NULL) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_INVALID_ARG, "input data is NULL");
+  }
+
+  if (!T_allocate_shape(&tmp, NULL, tmp.rank)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_NO_MEMORY, "shape allocation failed");
+  }
+
+  if (!T_allocate_stride(&tmp)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_NO_MEMORY, "stride allocation failed");
+  }
+  for (i32 i = 0, j = 0; i < src->rank; ++i) {
+    if (src->shape[i] == 1)
+      continue;
+
+    tmp.shape[j] = src->shape[i];
+    tmp.strides[j] = src->strides[i];
+    ++j;
+  }
+
+  if (!T_storage_retain(src->storage)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_INVALID_STATE, "storage retain failed");
+  }
+
+  tmp.storage = src->storage;
+
+  *dst = tmp;
+  return status_ok();
+}
+
+/* Remove a specific dimension of size 1. */
+Ten_Status T_tensor_squeeze_dim(Tensor *dst, const Tensor *src, i32 dim) {
+  Ten_Status status = T_validate_new_tensor(
+      dst, src->storage->dtype, src->shape, src->rank, src->storage->device);
+  if (status.stype != TT_OK)
+    return status;
+
+  if (!T_is_dtype_valid(src->storage->dtype))
+    return status_error(TT_ERR_INVALID_ARG, "invalid datatype");
+
+  if (dim < 0 || dim >= src->rank)
+    return status_error(TT_ERR_INVALID_ARG, "invalid squeeze dimension");
+
+  if (src->shape[dim] != 1)
+    return status_error(TT_ERR_INVALID_ARG,
+                        "cannot squeeze dimension with size != 1");
+  Tensor tmp = {0};
+  tmp.rank = src->rank - 1;
+  tmp.offset = src->offset;
+  tmp.num_el = src->num_el;
+
+  if (!T_is_ranks_valid(tmp.rank))
+    return status_error(TT_ERR_INVALID_ARG, "invalid resulting rank");
+
+  if (src->storage->n_bytes > 0 && src->storage->data == NULL) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_INVALID_ARG, "input data is NULL");
+  }
+
+  if (!T_allocate_shape(&tmp, NULL, tmp.rank)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_NO_MEMORY, "shape allocation failed");
+  }
+
+  if (!T_allocate_stride(&tmp)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_NO_MEMORY, "stride allocation failed");
+  }
+  for (i32 i = 0, j = 0; i < src->rank; ++i) {
+    if (i == dim)
+      continue;
+
+    tmp.shape[j] = src->shape[i];
+    tmp.strides[j] = src->strides[i];
+    ++j;
+  }
+
+  if (!T_storage_retain(src->storage)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_INVALID_STATE, "storage retain failed");
+  }
+
+  tmp.storage = src->storage;
+
+  *dst = tmp;
+  return status_ok();
+}
+
+/* Insert a dimension of size 1. */
+Ten_Status T_tensor_unsqueeze(Tensor *dst, const Tensor *src, i32 dim) {
+
+  Ten_Status status = T_validate_new_tensor(
+      dst, src->storage->dtype, src->shape, src->rank, src->storage->device);
+  if (status.stype != TT_OK)
+    return status;
+
+  if (!T_is_dtype_valid(src->storage->dtype))
+    return status_error(TT_ERR_INVALID_ARG, "invalid datatype");
+
+  if (dim < 0 || dim > src->rank) {
+    return status_error(TT_ERR_INVALID_ARG, "invalid unsqueeze dimension");
+  }
+
+  Tensor tmp = {0};
+  tmp.rank = src->rank + 1;
+  tmp.offset = src->offset;
+  tmp.num_el = src->num_el;
+
+  if (!T_is_ranks_valid(tmp.rank)) {
+    return status_error(TT_MAX_RANK, "max rank reached");
+  }
+
+  if (src->storage->n_bytes > 0 && src->storage->data == NULL) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_INVALID_ARG, "input data is NULL");
+  }
+
+  if (!T_allocate_shape(&tmp, NULL, tmp.rank)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_NO_MEMORY, "shape allocation failed");
+  }
+
+  if (!T_allocate_stride(&tmp)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_NO_MEMORY, "stride allocation failed");
+  }
+  i64 new_stride = (dim < src->rank) ? src->strides[dim] * src->shape[dim] : 1;
+  for (i32 i = 0, j = 0; i < tmp.rank; ++i) {
+    if (i == dim) {
+      tmp.shape[i] = 1;
+      tmp.strides[i] = new_stride;
+    } else {
+      tmp.shape[i] = src->shape[j];
+      tmp.strides[i] = src->strides[j];
+      ++j;
+    }
+  }
+
+  if (!T_storage_retain(src->storage)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_INVALID_STATE, "storage retain failed");
+  }
+
+  tmp.storage = src->storage;
+
+  *dst = tmp;
+  return status_ok();
+}
+
+/* Create a sliced tensor view. */
+Ten_Status T_tensor_slice(Tensor *dst, const Tensor *src, i32 rank, i64 start,
+                          i64 end, i64 step);
+Ten_Status T_is_contiguous_layout(const i64 *shape, const i64 *strides,
+                                  i32 rank) {
+  if (!T_is_ranks_valid(rank) || !T_is_shape_input_valid(shape, rank))
+    return status_error(TT_ERR_INVALID_ARG, "invalid source shape");
+
+  if (rank > 0 && strides == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "source strides are NULL");
+
+  i64 expected_stride = 1;
+
+  for (i32 i = rank - 1; i >= 0; --i) {
+    // Singleton dimensions do not affect contiguity.
+    if (shape[i] == 1)
+      continue;
+
+    if (strides[i] != expected_stride)
+      return status_error(TT_ERR_NOT_CONTIGUOUS, " strides mismatch");
+
+    if (shape[i] > INT64_MAX / expected_stride)
+      return status_error(TT_ERR_OVERFLOW, "shape element may overflow");
+
+    expected_stride *= shape[i];
+  }
+
+  return status_ok();
+}
+Ten_Status T_compute_reshape_strides(i64 *dst_strides, const i64 *src_shape,
+                                     const i64 *src_strides, i32 src_rank,
+                                     const i64 *dst_shape, i32 dst_rank) {
+
+  if (!T_is_ranks_valid(src_rank) ||
+      !T_is_shape_input_valid(src_shape, src_rank))
+    return status_error(TT_ERR_INVALID_ARG, "invalid source shape");
+
+  if (src_rank > 0 && src_strides == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "source strides are NULL");
+
+  if (!T_is_ranks_valid(dst_rank) ||
+      !T_is_shape_input_valid(dst_shape, dst_rank))
+    return status_error(TT_ERR_INVALID_ARG, "invalid destination shape");
+
+  if (dst_rank > 0 && dst_strides == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "destination strides are NULL");
+
+  i64 src_numel;
+  i64 dst_numel;
+
+  if (!T_get_numel(src_rank, src_shape, &src_numel) ||
+      !T_get_numel(dst_rank, dst_shape, &dst_numel))
+    return status_error(TT_ERR_OVERFLOW, "element count calculation failed");
+
+  if (src_numel != dst_numel)
+    return status_error(TT_ERR_INVALID_ARG, "reshape element count mismatch");
+
+  // Empty tensors have no elements to reinterpret.
+  if (src_numel == 0) {
+    if (!T_calculate_strides(dst_strides, dst_shape, dst_rank))
+      return status_error(TT_ERR_OVERFLOW, "stride calculation failed");
+
+    return status_ok();
+  }
+
+  // A scalar or a tensor containing only singleton dimensions
+  // is also compatible with a contiguous reshape.
+  if (T_is_contiguous_layout(src_shape, src_strides, src_rank).stype != TT_OK)
+    return status_error(
+        TT_ERR_INVALID_ARG,
+        "source layout cannot be reshaped by this implementation");
+
+  // Generate the destination's contiguous strides.
+  if (!T_calculate_strides(dst_strides, dst_shape, dst_rank))
+    return status_error(TT_ERR_OVERFLOW, "stride calculation failed");
+
+  return status_ok();
+}
+/* Reshape without copying, if the new shape is representable by strides. */
+Ten_Status T_tensor_reshape_view(Tensor *dst, const Tensor *src,
+                                 const i64 *shape, i32 rank) {
+  if (dst == NULL || src == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "source or destination is NULL");
+
+  if (dst->storage != NULL || dst->shape != NULL || dst->strides != NULL)
+    return status_error(TT_ERR_INVALID_STATE,
+                        "destination tensor is not empty");
+
+  if (src->storage == NULL)
+    return status_error(TT_ERR_INVALID_STATE, "source tensor has no storage");
+
+  if (!T_is_ranks_valid(src->rank) ||
+      !T_is_shape_input_valid(src->shape, src->rank))
+    return status_error(TT_ERR_INVALID_ARG, "invalid source tensor shape");
+
+  if (src->rank > 0 && src->strides == NULL)
+    return status_error(TT_ERR_INVALID_STATE, "source strides are NULL");
+
+  if (!T_is_ranks_valid(rank) || !T_is_shape_input_valid(shape, rank))
+    return status_error(TT_ERR_INVALID_ARG, "invalid destination shape");
+
+  i64 new_numel;
+
+  if (!T_get_numel(rank, shape, &new_numel))
+    return status_error(TT_ERR_OVERFLOW, "invalid destination shape");
+
+  if (new_numel != src->num_el)
+    return status_error(TT_ERR_INVALID_ARG, "reshape element count mismatch");
+
+  if (src->num_el < 0 || src->offset < 0)
+    return status_error(TT_ERR_INVALID_ARG, "invalid source metadata");
+
+  if (!T_is_dtype_valid(src->storage->dtype))
+    return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported dtype");
+
+  Tensor tmp = {0};
+
+  tmp.rank = rank;
+  tmp.num_el = new_numel;
+  tmp.offset = src->offset;
+
+  if (!T_allocate_shape(&tmp, shape, rank)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_NO_MEMORY, "shape allocation failed");
+  }
+
+  if (!T_allocate_stride(&tmp)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_NO_MEMORY, "stride allocation failed");
+  }
+
+  if (T_compute_reshape_strides(tmp.strides, src->shape, src->strides,
+                                src->rank, tmp.shape, tmp.rank)
+          .stype != TT_OK) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_INVALID_ARG,
+                        "reshape cannot be represented as a view");
+  }
+
+  if (!T_storage_retain(src->storage)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_INVALID_STATE, "storage retain failed");
+  }
+
+  tmp.storage = src->storage;
+
+  *dst = tmp;
+
+  return status_ok();
 }

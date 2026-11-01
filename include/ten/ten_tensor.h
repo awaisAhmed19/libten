@@ -25,11 +25,18 @@ extern bool T_is_ranks_valid(i32 ranks);
 /* Validates shape pointer, dimensions, rank, and element-count overflow. */
 extern bool T_is_shape_input_valid(const i64 *input_shape, i32 ranks);
 
+extern bool T_storage_retain(TensorStorage *storage);
+extern void T_storage_release(TensorStorage **storage);
+
 extern Ten_Status T_create_tensor_storage(TensorStorage **ts,
                                           const void *input_data,
                                           DataType dtype, Device dev,
                                           size_t n_bytes);
 
+extern bool T_allocate_shape(Tensor *t, const i64 *shape, i32 ranks);
+extern bool T_allocate_stride(Tensor *t);
+
+extern bool T_calculate_strides(i64 *strides, const i64 *shape, i32 rank);
 /*
  * Construction
  *  */
@@ -110,6 +117,8 @@ extern size_t T_get_nbytes(const Tensor *t);
 extern void *T_data(Tensor *t);
 extern const void *T_const_data(const Tensor *t);
 
+extern Ten_Status T_validate_new_tensor(const Tensor *t, DataType dtype,
+                                        const i64 *shape, i32 rank, Device dev);
 /*
  * Utilities
  *  */
@@ -119,11 +128,40 @@ extern const void *T_const_data(const Tensor *t);
  */
 extern u0 *T_allocate_tensor_data(size_t rows, size_t cols);
 
+extern Ten_Status T_copy_tensor_data(TensorStorage *dst, const Tensor *src);
+extern Ten_Status T_create_empty_storage(TensorStorage **storage,
+                                         DataType dtype, Device device,
+                                         size_t n_bytes);
+extern Ten_Status T_tensor_reshape(Tensor *dst, const Tensor *src,
+                                   const i64 *shape, i32 rank);
 /*Tensor view
  * */
 extern Ten_Status T_create_tensor_view(TensorView *tv, const Tensor *t);
 extern bool T_validate_tensor_bounds(const Tensor *t);
+/* Transpose two dimensions. */
+extern Ten_Status T_tensor_transpose(Tensor *dst, const Tensor *src, i32 dim0,
+                                     i32 dim1);
 
+/* Permute dimensions according to the supplied ordering. */
+extern Ten_Status T_tensor_permute(Tensor *dst, const Tensor *src,
+                                   const i64 *dims, i32 rank);
+
+/* Remove dimensions of size 1. */
+extern Ten_Status T_tensor_squeeze(Tensor *dst, const Tensor *src);
+
+/* Remove a specific dimension of size 1. */
+extern Ten_Status T_tensor_squeeze_dim(Tensor *dst, const Tensor *src, i32 dim);
+
+/* Insert a dimension of size 1. */
+extern Ten_Status T_tensor_unsqueeze(Tensor *dst, const Tensor *src, i32 dim);
+
+/* Create a sliced tensor view. */
+extern Ten_Status T_tensor_slice(Tensor *dst, const Tensor *src, i32 dim,
+                                 i64 start, i64 end, i64 step);
+
+/* Reshape without copying, if the new shape is representable by strides. */
+extern Ten_Status T_tensor_reshape_view(Tensor *dst, const Tensor *src,
+                                        const i64 *shape, i32 rank);
 #ifdef __cplusplus
 }
 #endif

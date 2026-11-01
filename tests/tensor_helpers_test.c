@@ -100,23 +100,23 @@ static int test_contiguous_strides(void) {
   i64 se[3] = {0, 0, 0};
   i64 ss[3] = {0, 0, 0};
 
-  calculate_strides(s1, one, 1);
+  T_calculate_strides(s1, one, 1);
   CHECK(s1[0] == 1);
 
-  calculate_strides(s2, two_d, 2);
+  T_calculate_strides(s2, two_d, 2);
   CHECK(s2[0] == 3 && s2[1] == 1);
 
-  calculate_strides(s3, three_d, 3);
+  T_calculate_strides(s3, three_d, 3);
   CHECK(s3[0] == 12 && s3[1] == 4 && s3[2] == 1);
 
-  calculate_strides(se, empty_middle, 3);
+  T_calculate_strides(se, empty_middle, 3);
   CHECK(se[0] == 0 && se[1] == 4 && se[2] == 1);
 
-  calculate_strides(ss, singleton, 3);
+  T_calculate_strides(ss, singleton, 3);
   CHECK(ss[0] == 1 && ss[1] == 1 && ss[2] == 1);
 
   /* Rank zero must not access shape or strides. */
-  calculate_strides(NULL, NULL, 0);
+  T_calculate_strides(NULL, NULL, 0);
   return 0;
 }
 
