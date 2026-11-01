@@ -21,4 +21,12 @@ typedef struct Tensor {
   i64 offset; /* elements */
   i64 num_el;
 } Tensor;
+
+typedef struct TensorView {
+  void *data;
+  i32 rank;
+  DataType dtype;
+  i64 shape[TT_MAX_RANK];
+  i64 strides[TT_MAX_RANK];
+} TensorView;
 #endif

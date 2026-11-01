@@ -10,9 +10,9 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(CTest)
 
-# ---------------------------------------------------------------------------
+#
 # Language standards
-# ---------------------------------------------------------------------------
+#
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -47,9 +47,9 @@ endif()
 set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release
                                              RelWithDebInfo MinSizeRel)
 
-# ---------------------------------------------------------------------------
+#
 # CUDA detection — optional backend, automatic CPU fallback
-# ---------------------------------------------------------------------------
+#
 
 include(CheckLanguage)
 check_language(CUDA)
@@ -83,9 +83,9 @@ else()
   message(STATUS "CUDA compiler not found. Building CPU backend only.")
 endif()
 
-# ---------------------------------------------------------------------------
+#
 # Library sources
-# ---------------------------------------------------------------------------
+#
 
 file(GLOB_RECURSE TEN_C_SOURCES CONFIGURE_DEPENDS
      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.c"
@@ -143,34 +143,33 @@ else()
 endif()
 
 if(BUILD_TESTING)
-  # Each white-box test includes tensor.c directly. Build each test in its own
-  # executable to avoid duplicate symbols and main().
-  function(ten_add_whitebox_test test_name source_file)
+  function(ten_add_test test_name source_file)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/${source_file}")
       set(target_name "ten_${test_name}_tests")
 
-      add_executable(${target_name} "tests/${source_file}" src/core/ten_dtype.c)
+      add_executable(${target_name} "tests/${source_file}")
+
+      target_link_libraries(${target_name} PRIVATE ten)
 
       ten_enable_sanitizers(${target_name})
 
       target_compile_features(${target_name} PRIVATE c_std_11)
 
       target_include_directories(
-        ${target_name}
-        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include"
-                "${CMAKE_CURRENT_SOURCE_DIR}/src"
-                "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        ${target_name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+                               "${CMAKE_CURRENT_SOURCE_DIR}/tests")
 
       add_test(NAME "${test_name}" COMMAND ${target_name})
     endif()
   endfunction()
 
-  ten_add_whitebox_test(helpers tensor_helpers_test.c)
-  ten_add_whitebox_test(constructor tensor_constructor_test.c)
-  ten_add_whitebox_test(share_storage tensor_share_storage_test.c)
-  ten_add_whitebox_test(shape tensor_share_test.c)
-  ten_add_whitebox_test(tensor tensor_test.c)
-  ten_add_whitebox_test(checked tensor_checked_test.c)
+  ten_add_test(helpers tensor_helpers_test.c)
+  ten_add_test(constructor tensor_constructor_test.c)
+  ten_add_test(share_storage tensor_share_storage_test.c)
+  ten_add_test(shape tensor_share_test.c)
+  ten_add_test(tensor tensor_test.c)
+  ten_add_test(checked tensor_checked_test.c)
+  ten_add_test(views tensor_views_test.c)
 endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/basic_tensor.c")

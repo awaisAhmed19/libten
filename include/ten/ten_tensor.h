@@ -119,6 +119,11 @@ extern const void *T_const_data(const Tensor *t);
  */
 extern u0 *T_allocate_tensor_data(size_t rows, size_t cols);
 
+/*Tensor view
+ * */
+extern Ten_Status T_create_tensor_view(TensorView *tv, const Tensor *t);
+extern bool T_validate_tensor_bounds(const Tensor *t);
+
 #ifdef __cplusplus
 }
 #endif

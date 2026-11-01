@@ -121,20 +121,25 @@ extern bool T_is_dtype_valid(const enum DataType type);
 extern RangeStatus T_checked_add_size(size_t a, size_t b, size_t *out);
 extern RangeStatus T_checked_mul_size(size_t a, size_t b, size_t *out);
 
-extern RangeStatus T_check_i8_add(i8 a, i8 b);
-extern RangeStatus T_check_i16_add(i16 a, i16 b);
-extern RangeStatus T_check_i32_add(i32 a, i32 b);
-extern RangeStatus T_check_i64_add(i64 a, i64 b);
+extern RangeStatus T_check_i8_mul(i8 a, i8 b, i8 *out);
+extern RangeStatus T_check_i16_mul(i16 a, i16 b, i16 *out);
+extern RangeStatus T_check_i32_mul(i32 a, i32 b, i32 *out);
+extern RangeStatus T_check_i64_mul(i64 a, i64 b, i64 *out);
 
-extern RangeStatus T_check_u8_add(u8 a, u8 b);
-extern RangeStatus T_check_u16_add(u16 a, u16 b);
-extern RangeStatus T_check_u32_add(u32 a, u32 b);
-extern RangeStatus T_check_u64_add(u64 a, u64 b);
+extern RangeStatus T_check_i8_add(i8 a, i8 b, i8 *out);
+extern RangeStatus T_check_i16_add(i16 a, i16 b, i16 *out);
+extern RangeStatus T_check_i32_add(i32 a, i32 b, i32 *out);
+extern RangeStatus T_check_i64_add(i64 a, i64 b, i64 *out);
 
-extern RangeStatus T_check_u8_sub(u8 a, u8 b);
-extern RangeStatus T_check_u16_sub(u16 a, u16 b);
-extern RangeStatus T_check_u32_sub(u32 a, u32 b);
-extern RangeStatus T_check_u64_sub(u64 a, u64 b);
+extern RangeStatus T_check_u8_add(u8 a, u8 b, u8 *out);
+extern RangeStatus T_check_u16_add(u16 a, u16 b, u16 *out);
+extern RangeStatus T_check_u32_add(u32 a, u32 b, u32 *out);
+extern RangeStatus T_check_u64_add(u64 a, u64 b, u64 *out);
 
-extern RangeStatus T_check_f64_add(f64 a, f64 b);
-extern RangeStatus T_check_f32_add(f32 a, f32 b);
+extern RangeStatus T_check_u8_sub(u8 a, u8 b, u8 *out);
+extern RangeStatus T_check_u16_sub(u16 a, u16 b, u16 *out);
+extern RangeStatus T_check_u32_sub(u32 a, u32 b, u32 *out);
+extern RangeStatus T_check_u64_sub(u64 a, u64 b, u64 *out);
+
+extern RangeStatus T_check_f64_add(f64 a, f64 b, f64 *out);
+extern RangeStatus T_check_f32_add(f32 a, f32 b, f32 *out);

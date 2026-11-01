@@ -249,13 +249,53 @@ I'd like to settle negative strides, zero strides, and reshape semantics before
 writing the public Views API. Those decisions influence almost every function in
 this module.
  * */
-typedef struct TensorView {
-  void *data;
-  i32 rank;
-  DataType dtype;
-  i64 *shape;
-  i64 *strides;
-} TensorView;
+
+bool T_validate_tensor_bounds(const Tensor *t) {
+  if (t == NULL || t->storage == NULL)
+    return false;
+
+  if (!T_is_ranks_valid(t->rank) ||
+      !T_is_shape_input_valid(t->shape, t->rank) ||
+      (t->rank > 0 && t->strides == NULL))
+    return false;
+
+  if (t->offset < 0 || t->num_el < 0)
+    return false;
+
+  size_t dtype_size = T_get_dtype_size(t->storage->dtype);
+
+  if (dtype_size == 0)
+    return false;
+
+  size_t capacity = t->storage->n_bytes / dtype_size;
+
+  if (t->num_el == 0)
+    return (size_t)t->offset <= capacity;
+
+  if (t->storage->data == NULL)
+    return false;
+
+  size_t max_offset = (size_t)t->offset;
+
+  for (i32 i = 0; i < t->rank; ++i) {
+    if (t->shape[i] <= 0 || t->strides[i] < 0)
+      return false;
+
+    size_t dim_offset;
+    size_t next_offset;
+
+    if (T_checked_mul_size((size_t)(t->shape[i] - 1), (size_t)t->strides[i],
+                           &dim_offset) != RNG_OK)
+      return false;
+
+    if (T_checked_add_size(max_offset, dim_offset, &next_offset) != RNG_OK)
+      return false;
+
+    max_offset = next_offset;
+  }
+
+  return max_offset < capacity;
+}
 
 Ten_Status T_create_tensor_view(TensorView *tv, const Tensor *t) {
 
@@ -270,8 +310,10 @@ Ten_Status T_create_tensor_view(TensorView *tv, const Tensor *t) {
     return (Ten_Status){TT_ERR_INVALID_STATE, "source tensor has no storage"};
 
   if (!T_is_ranks_valid(t->rank) ||
-      !T_is_shape_input_valid(t->shape, t->rank) || t->strides == NULL)
+      !T_is_shape_input_valid(t->shape, t->rank) ||
+      (t->rank > 0 && t->strides == NULL)) {
     return (Ten_Status){TT_ERR_INVALID_ARG, "invalid source tensor metadata"};
+  }
 
   size_t dtype_size = T_get_dtype_size(t->storage->dtype);
 
@@ -281,19 +323,33 @@ Ten_Status T_create_tensor_view(TensorView *tv, const Tensor *t) {
   if (t->storage->device.devtype != CPU)
     return (Ten_Status){TT_ERR_UNSUPPORTED, "device backend unavailable"};
 
+  if (!T_validate_tensor_bounds(t))
+    return (Ten_Status){TT_ERR_INVALID_ARG, "tensor exceeds storage bounds"};
+
+  if (t->num_el > 0 && t->storage->data == NULL)
+    return (Ten_Status){TT_ERR_INVALID_STATE,
+                        "nonempty tensor has NULL storage data"};
+  if (t->offset < 0)
+    return (Ten_Status){TT_ERR_INVALID_ARG, "negative tensor offset"};
   TensorView tmp_view = {0};
 
-  if (t->storage->data != NULL) {
-    tmp_view.data =
-        (unsigned char *)t->storage->data + (size_t)t->offset * dtype_size;
+  size_t byte_offset;
+  if (T_checked_mul_size((size_t)t->offset, dtype_size, &byte_offset) !=
+      RNG_OK) {
+    return (Ten_Status){TT_ERR_OVERFLOW, "offset overflow"};
+  }
+
+  if (t->num_el > 0) {
+    tmp_view.data = (unsigned char *)t->storage->data + byte_offset;
   }
 
   tmp_view.rank = t->rank;
   tmp_view.dtype = t->storage->dtype;
 
-  memcpy(tmp_view.shape, t->shape, (size_t)t->rank * sizeof(*t->shape));
-  memcpy(tmp_view.strides, t->strides, (size_t)t->rank * sizeof(*t->strides));
-
+  if (t->rank > 0) {
+    memcpy(tmp_view.shape, t->shape, (size_t)t->rank * sizeof(*t->shape));
+    memcpy(tmp_view.strides, t->strides, (size_t)t->rank * sizeof(*t->strides));
+  }
   *tv = tmp_view;
 
   return (Ten_Status){TT_OK, "success"};
