@@ -2,253 +2,6 @@
 #include "ten/ten_tensor.h"
 #include <string.h>
 
-/*Alright. Let's narrow the discussion to the relationship between `tt_tensor`,
-`tt_storage`, and `tt_view`, particularly how a tensor view should represent a
-different interpretation of existing memory.
-
-Your proposed design has a good separation of responsibilities:
-
-- `tt_tensor` is the owning/reference-counted tensor handle.
-- `tt_storage` represents the underlying allocation and its lifetime.
-- `tt_view` is a lightweight, non-owning descriptor suitable for passing to
-CPU/CUDA kernels.
-
-The important distinction is that a tensor view and a kernel view are not
-necessarily the same thing.
-
-## 1. Your `tt_tensor` design
-
-I like the fixed-size metadata arrays:
-
-```
-typedef struct tt_tensor {
-    struct tt_storage *storage;
-
-    tt_dtype dtype;
-    int32_t rank;
-
-    int64_t shape[TT_MAX_RANK];
-    int64_t strides[TT_MAX_RANK];
-
-    int64_t offset;   elements
-int64_t numel;
-
-uint32_t magic;
-}
-tt_tensor;
-```
-
-Compared with your previous dynamically allocated `shape` and `strides`, this
-has several advantages:
-
-- No separate allocations for tensor metadata.
-- Creating views becomes simpler.
-- Destroying a tensor only needs to release storage.
-- Copying metadata becomes straightforward.
-- No shape/stride allocation failures during view creation.
-
-The trade-off is that every tensor occupies more memory, even scalars and
-low-rank tensors. With `TT_MAX_RANK = 8`, I think that's reasonable.
-
-One important rule: copying this struct with ordinary assignment must not be
-treated as creating a valid independent tensor. The storage reference count must
-be retained.
-
-## 2. The `tt_view` design
-
-Your proposed descriptor:
-
-```
-typedef struct tt_view {
-  void *data; /* already includes the offset
-
-int32_t rank;
-int32_t dtype;
-
-int64_t shape[TT_MAX_RANK];
-int64_t strides[TT_MAX_RANK];
-}
-tt_view;
-```
-
-            This is a good kernel -
-            facing representation.
-
-            Notice the distinction :
-
-        | Property | `tt_tensor` | `tt_view` | |
-        -- -- -- -- -- -- -- -- -- -- -- -- --| -- -- -- -- -- -|
-        -- -- -- -- -- -- -- -| | Storage ownership | Yes | No | |
-        Reference counting | Indirectly | No | | Offset | Explicit |
-        Already applied | | Shape | Yes | Yes | | Strides | Yes | Yes | |
-        Dtype | Yes | Yes | | Device allocation lifetime | Managed |
-        Caller - managed |
-
-        I would keep this distinction.
-
-        ## #Why apply the offset
-    ?
-
-    Consider a contiguous tensor
-    :
-
-``` Shape : [ 3, 4 ] Strides : [ 4, 1 ] Offset : 0
-```
-
-                                After slicing :
-
-``` Shape : [ 2, 4 ] Strides : [ 4, 1 ] Offset : 4
-```
-
-                                The kernel -
-                                facing pointer becomes :
-
-``` view.data = (char *)storage->data + offset * dtype_size;
-```
-
-    The kernel doesn't need to know about the original storage offset.
-
-    For an element at logical coordinates `[i, j]`:
-
-``` element_address = view.data + i * view.strides[0] * dtype_size +
-                       j * view.strides[1] * dtype_size;
-```
-
-This is clean for both CPU and CUDA.
-
-## 3. One important issue: pointer arithmetic
-
-I would not calculate the adjusted pointer using `void *` arithmetic.
-
-Use:
-
-```
-static void *tt_storage_offset_ptr(
-    void *data,
-    int64_t offset,
-    size_t dtype_size
-) {
-  return (unsigned char *)data + (size_t)offset * dtype_size;
-}
-```
-
-    Of course,
-    validate multiplication overflow and storage bounds before doing this.
-
-    Also,
-    empty tensors need special treatment
-    : their data pointer may legitimately be `NULL`,
-      so don't perform pointer arithmetic on it.
-
-      ##4. The most important design decision : mutability
-
-                                                    Suppose :
-
-``` tt_tensor a;
-tt_tensor b;
-
-tt_tensor_slice(&b, &a, ...);
-```
-
-    Both tensors reference the same storage.
-
-    Now :
-
-``` tt_tensor_fill(&b, ...);
-```
-
-    Should this modify `a`
-    ?
-
-    My recommendation
-    : yes.
-
-      Views should share memory,
-    and mutations should be visible through all aliases.
-
-    However,
-    this introduces a distinction between :
-
-    -Logical tensor ownership.-
-            Physical storage ownership.-
-            Data mutation
-                .
-
-            The reference count only handles lifetime
-                .It does not provide synchronization or prevent conflicting
-                    writes
-                .
-
-            I would document that concurrent mutation through aliases requires
-                al synchronization
-                .
-
-            ##5. Questions I'd settle before implementation
-
-            There are three decisions worth making before we design the
-                individual view functions
-                .
-
-            A.Negative strides
-
-                Should slicing support reversed dimensions immediately
-        ?
-
-        Example
-        :
-
-``` Original : [ 1, 2, 3, 4, 5 ] Reversed
-    : [ 5, 4, 3, 2, 1 ]
-
-      stride = -1 offset =
-          4
-```
-
-              I'd defer negative strides for the first implementation.
-
-              B.Zero strides
-
-                  Should broadcasting be represented through zero strides
-              ?
-
-              Example
-              :
-
-``` Original : [ 1, 2, 3 ]
-
-                Broadcast : [ 1, 2, 3 ][1, 2, 3][1, 2, 3]
-
-                            Shape : [ 3, 3 ] Strides
-    : [ 0, 1 ]
-```
-
-      I'd support zero strides, but treat broadcast views as read-only
-initially.
-
-      C.Reshape
-
-          Should `reshape`:
-
-      1. Only succeed when the new shape can be represented without
-          copying.2. Automatically materialize a contiguous copy when necessary.
-
-      My recommendation is to separate these operations :
-
-``` tt_status
-      tt_tensor_reshape_view(...);
-tt_status tt_tensor_reshape(...);
-```
-
-The first guarantees no copy. The second can eventually implement copy fallback.
-
-My proposed direction: keep `tt_tensor` as the lifetime-owning descriptor,
-`tt_view` as the lightweight kernel descriptor, and make all view
-transformations metadata-only operations.
-
-I'd like to settle negative strides, zero strides, and reshape semantics before
-writing the public Views API. Those decisions influence almost every function in
-this module.
- * */
 bool T_is_permutation(const i64 *dims, i32 rank) {
   if (rank < 0 || rank > TT_MAX_RANK)
     return false;
@@ -777,4 +530,165 @@ Ten_Status T_tensor_reshape_view(Tensor *dst, const Tensor *src,
 
   /* Retain source storage and commit the view. */
   return view_commit(dst, &tmp, src);
+}
+// Ten_Status T_tensor_contiguous_logical_copy(Tensor *dst, const Tensor *src) {
+//   if (dst == NULL || src == NULL)
+//     return status_error(TT_ERR_INVALID_ARG, "source or destination is NULL");
+//
+//   if (dst->storage == NULL || src->storage == NULL)
+//     return status_error(TT_ERR_INVALID_STATE,
+//                         "source or destination has no storage");
+//
+//   if (!T_is_dtype_valid(src->storage->dtype))
+//     return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported source
+//     dtype");
+//
+//   if (dst->storage->dtype != src->storage->dtype)
+//     return status_error(TT_ERR_DTYPE_MISMATCH, "storage dtype mismatch");
+//
+//   if (dst->storage->device.devtype != CPU ||
+//       src->storage->device.devtype != CPU)
+//     return status_error(TT_ERR_UNSUPPORTED, "CPU copy backend only");
+//
+//   if (!T_is_ranks_valid(src->rank) ||
+//       !T_is_shape_input_valid(src->shape, src->rank))
+//     return status_error(TT_ERR_INVALID_ARG, "invalid source shape");
+//
+//   if (src->rank != dst->rank || src->num_el != dst->num_el)
+//     return status_error(TT_ERR_INVALID_ARG, "tensor shape mismatch");
+//
+//   if (src->rank > 0 && src->strides == NULL)
+//     return status_error(TT_ERR_INVALID_STATE, "source strides are NULL");
+//
+//   if (src->num_el < 0 || src->offset < 0)
+//     return status_error(TT_ERR_INVALID_ARG, "invalid source metadata");
+//
+//   if (!T_validate_tensor_bounds(src) || !T_validate_tensor_bounds(dst))
+//     return status_error(TT_ERR_INVALID_ARG, "tensor exceeds storage bounds");
+//
+//   size_t dtype_size = T_get_dtype_size(src->storage->dtype);
+//
+//   if (dtype_size == 0)
+//     return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported dtype");
+//
+//   if (src->num_el == 0)
+//     return status_ok();
+//
+//   i64 indices[TT_MAX_RANK] = {0};
+//
+//   for (i64 n = 0; n < src->num_el; ++n) {
+//     i64 src_offset = src->offset;
+//
+//     for (i32 d = 0; d < src->rank; ++d)
+//       src_offset += indices[d] * src->strides[d];
+//
+//     memcpy((char *)dst->storage->data + (size_t)n * dtype_size,
+//            (char *)src->storage->data + (size_t)src_offset * dtype_size,
+//            dtype_size);
+//
+//     /* Increment multidimensional indices. */
+//     for (i32 d = src->rank - 1; d >= 0; --d) {
+//       indices[d]++;
+//
+//       if (indices[d] < src->shape[d])
+//         break;
+//
+//       indices[d] = 0;
+//     }
+//   }
+//
+//   return status_ok();
+// }
+Ten_Status T_tensor_contiguous_materialize(Tensor *dst, const Tensor *src) {
+  if (dst == NULL || src == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "source or destination is NULL");
+  if (dst->storage != NULL || dst->shape != NULL || dst->strides != NULL)
+    return status_error(TT_ERR_INVALID_STATE,
+                        "destination tensor is not empty");
+  if (!T_is_dtype_valid(src->storage->dtype))
+    return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported source dtype");
+
+  if (src->storage == NULL)
+    return status_error(TT_ERR_INVALID_STATE, "source has no storage");
+  if (src->storage->device.devtype != CPU)
+    return status_error(TT_ERR_UNSUPPORTED, "CPU copy backend only");
+
+  if (!T_is_ranks_valid(src->rank) ||
+      !T_is_shape_input_valid(src->shape, src->rank))
+    return status_error(TT_ERR_INVALID_ARG, "invalid source shape");
+
+  if (src->rank > 0 && src->strides == NULL)
+    return status_error(TT_ERR_INVALID_STATE, "source strides are NULL");
+
+  if (src->num_el < 0 || src->offset < 0)
+    return status_error(TT_ERR_INVALID_ARG, "invalid source metadata");
+
+  if (!T_validate_tensor_bounds(src))
+    return status_error(TT_ERR_INVALID_ARG, "tensor exceeds storage bounds");
+
+  size_t dtype_size = T_get_dtype_size(src->storage->dtype);
+
+  if (dtype_size == 0)
+    return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported dtype");
+
+  size_t n_bytes;
+
+  if ((u64)src->num_el > SIZE_MAX / dtype_size)
+    return status_error(TT_ERR_OVERFLOW, "tensor byte size overflow");
+
+  n_bytes = (size_t)src->num_el * dtype_size;
+  Tensor tmp = {0};
+
+  tmp.rank = src->rank;
+  tmp.num_el = src->num_el;
+  tmp.offset = 0;
+  /* Allocate metadata. */
+  if (!T_allocate_shape(&tmp, src->shape, src->rank)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_NO_MEMORY, "shape allocation failed");
+  }
+
+  if (!T_allocate_stride(&tmp)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_NO_MEMORY, "stride allocation failed");
+  }
+
+  /* Generate contiguous strides. */
+  if (!T_calculate_strides(tmp.strides, tmp.shape, tmp.rank)) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_OVERFLOW,
+                        "contiguous stride calculation failed");
+  }
+  if (T_create_empty_storage(&tmp.storage, src->storage->dtype,
+                             src->storage->device, n_bytes)
+          .stype != TT_OK) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_INTERNAL, "storage allocation failed");
+  }
+
+  i64 indices[TT_MAX_RANK] = {0};
+
+  for (i64 n = 0; n < src->num_el; ++n) {
+    i64 src_offset = src->offset;
+
+    for (i32 d = 0; d < src->rank; ++d)
+      src_offset += indices[d] * src->strides[d];
+
+    memcpy((char *)tmp.storage->data + (size_t)n * dtype_size,
+           (char *)src->storage->data + (size_t)src_offset * dtype_size,
+           dtype_size);
+
+    /* Increment multidimensional indices. */
+    for (i32 d = src->rank - 1; d >= 0; --d) {
+      indices[d]++;
+
+      if (indices[d] < src->shape[d])
+        break;
+
+      indices[d] = 0;
+    }
+  }
+
+  *dst = tmp;
+  return status_ok();
 }

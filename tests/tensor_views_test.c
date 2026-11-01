@@ -10,6 +10,7 @@
 
 static Device cpu_device(void) { return (Device){.devtype = CPU, .id = 0}; }
 
+#define CPU_DEVICE ((Device){.devtype = CPU, .id = 0})
 /*
  * 1. Normal contiguous tensor
  *  */
@@ -496,7 +497,183 @@ static int test_reshape_view_rejects_invalid_source_bounds(void) {
   T_destroy_tensor(&src);
   return 0;
 }
+static int test_materialize_contiguous_tensor(void) {
+  const i64 shape[] = {2, 3};
+  const float data[] = {1, 2, 3, 4, 5, 6};
 
+  Tensor src = {0};
+  Tensor dst = {0};
+
+  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 2, CPU_DEVICE),
+               TT_OK);
+
+  CHECK_STATUS(T_tensor_contiguous_materialize(&dst, &src), TT_OK);
+
+  CHECK(dst.storage != src.storage);
+  CHECK(dst.rank == src.rank);
+  CHECK(dst.num_el == src.num_el);
+  CHECK(dst.offset == 0);
+
+  bool contiguous = false;
+  CHECK_STATUS(T_tensor_is_contiguous(&dst, &contiguous), TT_OK);
+  CHECK(contiguous);
+
+  const float *result = (const float *)dst.storage->data;
+
+  for (i64 i = 0; i < 6; ++i)
+    CHECK(result[i] == data[i]);
+
+  T_destroy_tensor(&src);
+  T_destroy_tensor(&dst);
+  return 0;
+}
+
+static int test_materialize_transposed_tensor(void) {
+  const i64 shape[] = {2, 3};
+  const float data[] = {1, 2, 3, 4, 5, 6};
+  const float expected[] = {1, 4, 2, 5, 3, 6};
+
+  Tensor src = {0};
+  Tensor view = {0};
+  Tensor dst = {0};
+
+  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 2, CPU_DEVICE),
+               TT_OK);
+
+  CHECK_STATUS(T_tensor_transpose(&view, &src, 0, 1), TT_OK);
+
+  bool contiguous = true;
+  CHECK_STATUS(T_tensor_is_contiguous(&view, &contiguous), TT_OK);
+  CHECK(!contiguous);
+
+  CHECK_STATUS(T_tensor_contiguous_materialize(&dst, &view), TT_OK);
+
+  CHECK(dst.storage != view.storage);
+  CHECK(dst.offset == 0);
+
+  CHECK_STATUS(T_tensor_is_contiguous(&dst, &contiguous), TT_OK);
+  CHECK(contiguous);
+
+  const float *result = (const float *)dst.storage->data;
+
+  for (i64 i = 0; i < 6; ++i)
+    CHECK(result[i] == expected[i]);
+
+  T_destroy_tensor(&src);
+  T_destroy_tensor(&view);
+  T_destroy_tensor(&dst);
+  return 0;
+}
+
+static int test_materialize_nonzero_offset(void) {
+  const i64 shape[] = {5};
+  const i64 view_shape[] = {3};
+  const float data[] = {10, 20, 30, 40, 50};
+  const float expected[] = {30, 40, 50};
+
+  Tensor src = {0};
+  Tensor view = {0};
+  Tensor dst = {0};
+
+  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 1, CPU_DEVICE),
+               TT_OK);
+
+  CHECK(T_storage_retain(src.storage));
+
+  view.storage = src.storage;
+  view.rank = 1;
+  view.num_el = 3;
+  view.offset = 2;
+
+  CHECK(T_allocate_shape(&view, view_shape, 1));
+  CHECK(T_allocate_stride(&view));
+  view.strides[0] = 1;
+
+  CHECK_STATUS(T_tensor_contiguous_materialize(&dst, &view), TT_OK);
+
+  CHECK(dst.storage != view.storage);
+  CHECK(dst.offset == 0);
+
+  const float *result = (const float *)dst.storage->data;
+
+  for (i64 i = 0; i < 3; ++i)
+    CHECK(result[i] == expected[i]);
+
+  T_destroy_tensor(&src);
+  T_destroy_tensor(&view);
+  T_destroy_tensor(&dst);
+
+  return 0;
+}
+
+static int test_materialize_independent_storage(void) {
+  const i64 shape[] = {3};
+  const float data[] = {1, 2, 3};
+
+  Tensor src = {0};
+  Tensor dst = {0};
+
+  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 1, CPU_DEVICE),
+               TT_OK);
+
+  CHECK_STATUS(T_tensor_contiguous_materialize(&dst, &src), TT_OK);
+
+  CHECK(dst.storage != src.storage);
+
+  float *dst_data = (float *)dst.storage->data;
+  CHECK(dst_data != NULL);
+
+  dst_data[0] = 999.0f;
+
+  const float *src_data = (const float *)src.storage->data;
+  CHECK(src_data[0] == 1.0f);
+
+  T_destroy_tensor(&src);
+  T_destroy_tensor(&dst);
+  return 0;
+}
+
+static int test_materialize_scalar_and_empty(void) {
+  const float scalar = 42.0f;
+  const i64 empty_shape[] = {2, 0, 4};
+
+  Tensor src_scalar = {0};
+  Tensor dst_scalar = {0};
+  Tensor src_empty = {0};
+  Tensor dst_empty = {0};
+
+  CHECK_STATUS(
+      T_create_tensor_by_data(&src_scalar, &scalar, F32, NULL, 0, CPU_DEVICE),
+      TT_OK);
+
+  CHECK_STATUS(T_tensor_contiguous_materialize(&dst_scalar, &src_scalar),
+               TT_OK);
+
+  CHECK(dst_scalar.rank == 0);
+  CHECK(dst_scalar.num_el == 1);
+  CHECK(dst_scalar.offset == 0);
+  CHECK(dst_scalar.storage != src_scalar.storage);
+
+  CHECK(*(const float *)dst_scalar.storage->data == 42.0f);
+
+  CHECK_STATUS(T_create_tensor_by_data(&src_empty, NULL, F32, empty_shape, 3,
+                                       CPU_DEVICE),
+               TT_OK);
+
+  CHECK_STATUS(T_tensor_contiguous_materialize(&dst_empty, &src_empty), TT_OK);
+
+  CHECK(dst_empty.num_el == 0);
+  CHECK(dst_empty.rank == 3);
+  CHECK(dst_empty.offset == 0);
+  CHECK(dst_empty.storage != src_empty.storage);
+
+  T_destroy_tensor(&src_scalar);
+  T_destroy_tensor(&dst_scalar);
+  T_destroy_tensor(&src_empty);
+  T_destroy_tensor(&dst_empty);
+
+  return 0;
+}
 /*
  * Main
  *  */
@@ -511,7 +688,12 @@ int main(void) {
       test_reshape_view_rejects_non_contiguous_source() ||
       test_scalar_and_empty_reshape_views() ||
       test_reshape_view_rejects_element_count_mismatch() ||
-      test_reshape_view_rejects_invalid_source_bounds()) {
+      test_reshape_view_rejects_invalid_source_bounds() ||
+      test_materialize_contiguous_tensor() ||
+      test_materialize_transposed_tensor() ||
+      test_materialize_nonzero_offset() ||
+      test_materialize_independent_storage() ||
+      test_materialize_scalar_and_empty()) {
     return EXIT_FAILURE;
   }
 

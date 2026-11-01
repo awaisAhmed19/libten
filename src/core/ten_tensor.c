@@ -721,27 +721,37 @@ Ten_Status T_tensor_share_storage(Tensor *dst, TensorStorage *storage,
   return status_ok();
 }
 
-bool T_is_contiguous(const Tensor *t) {
-  if (t == NULL)
-    return false;
+Ten_Status T_tensor_is_contiguous(const Tensor *t, bool *out) {
+  if (t == NULL || out == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "null argument");
 
-  if (t->num_el == 0)
-    return true;
+  if (!T_validate_tensor_bounds(t))
+    return status_error(TT_ERR_INVALID_ARG, "invalid tensor bounds");
+
+  if (t->num_el == 0) {
+    *out = true;
+    return status_ok();
+  }
 
   i64 expected_stride = 1;
 
   for (i32 i = t->rank - 1; i >= 0; --i) {
-
     if (t->shape[i] == 1)
       continue;
 
-    if (t->strides[i] != expected_stride)
-      return false;
+    if (t->strides[i] != expected_stride) {
+      *out = false;
+      return status_ok();
+    }
+
+    if (expected_stride > INT64_MAX / t->shape[i])
+      return status_error(TT_ERR_OVERFLOW, "stride calculation overflow");
 
     expected_stride *= t->shape[i];
   }
 
-  return true;
+  *out = true;
+  return status_ok();
 }
 
 Ten_Status T_create_tensor_by_data(Tensor *t, const void *input_data,
