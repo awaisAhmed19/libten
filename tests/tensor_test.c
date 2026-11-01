@@ -10,7 +10,7 @@
 
 size_t get_dtype_size(DataType dtype);
 #include "../src/core/ten_tensor.c"
-
+#include "./tensor_checker.h"
 size_t get_dtype_size(DataType dtype) {
   switch (dtype) {
   case I8:
@@ -33,27 +33,6 @@ size_t get_dtype_size(DataType dtype) {
 }
 
 #define CPU_DEVICE ((Device){.devtype = CPU, .id = 0})
-static int tests_run;
-#define CHECK(expr)                                                            \
-  do {                                                                         \
-    ++tests_run;                                                               \
-    if (!(expr)) {                                                             \
-      fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #expr);          \
-      return 1;                                                                \
-    }                                                                          \
-  } while (0)
-
-#define CHECK_STATUS(expr, expected)                                           \
-  do {                                                                         \
-    Ten_Status status_check = (expr);                                          \
-    ++tests_run;                                                               \
-    if (status_check.stype != (expected)) {                                    \
-      fprintf(stderr, "FAIL %s:%d: expected status %d, got %d (%s)\n",         \
-              __FILE__, __LINE__, (expected), status_check.stype,              \
-              status_check.msg ? status_check.msg : "no message");             \
-      return 1;                                                                \
-    }                                                                          \
-  } while (0)
 
 static Device cpu_device(void) { return (Device){.devtype = CPU, .id = 0}; }
 

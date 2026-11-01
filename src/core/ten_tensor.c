@@ -17,34 +17,6 @@ bool T_is_ranks_valid(const i32 ranks) {
   return 0 <= ranks && ranks <= TT_MAX_RANK;
 }
 
-bool T_is_shape_input_valid(const i64 *input_shape, i32 ranks) {
-  if (!T_is_ranks_valid(ranks))
-    return false;
-
-  if (ranks == 0)
-    return true; // scalar tensor;
-
-  if (input_shape == NULL) {
-    fprintf(stderr,
-            "ERR: passed a NULL input pointer, fn: T_is_shape_input_valid");
-    return false;
-  }
-
-  // arithmetic overflow;
-  i64 num_el = 1;
-  for (int i = 0; i < ranks; ++i) {
-    i64 dim = input_shape[i];
-
-    if (dim < 0)
-      return false;
-    if (dim != 0 && num_el > I64_MAX / dim)
-      return false;
-
-    num_el *= dim;
-  }
-  return true;
-}
-
 bool T_get_numel(const i32 ranks, const i64 *shape, i64 *out) {
   if (out == NULL || !T_is_ranks_valid(ranks))
     return false;
@@ -68,6 +40,22 @@ bool T_get_numel(const i32 ranks, const i64 *shape, i64 *out) {
 
   *out = num_el;
   return true;
+}
+bool T_is_shape_input_valid(const i64 *input_shape, i32 ranks) {
+  if (!T_is_ranks_valid(ranks))
+    return false;
+
+  if (ranks == 0)
+    return true; // scalar tensor;
+
+  if (input_shape == NULL) {
+    fprintf(stderr,
+            "ERR: passed a NULL input pointer, fn: T_is_shape_input_valid");
+    return false;
+  }
+
+  i64 num_el;
+  return T_get_numel(ranks, input_shape, &num_el);
 }
 i32 T_get_rank(const Tensor *t) {
   if (t == NULL) {
@@ -341,51 +329,56 @@ static bool initialize_data(void *data, DataType dtype, i64 numel,
     return true;
   }
 
-  /* FILL_ONES: use a dtype-aware scalar for each case. */
+  /* FILL_ONES: build a dtype-aware "one", then fill with it. */
+  union {
+    float as_f32;
+    double as_f64;
+    int8_t as_i8;
+    int16_t as_i16;
+    int32_t as_i32;
+    int64_t as_i64;
+    uint8_t as_u8;
+    uint16_t as_u16;
+    uint32_t as_u32;
+    uint64_t as_u64;
+  } one = {0};
+
   switch (dtype) {
-  case F32: {
-    const float one = 1.0f;
-    return fill_by_value(data, &one, dtype, numel);
-  }
-  case F64: {
-    const double one = 1.0;
-    return fill_by_value(data, &one, dtype, numel);
-  }
-  case I8: {
-    const int8_t one = 1;
-    return fill_by_value(data, &one, dtype, numel);
-  }
-  case I16: {
-    const int16_t one = 1;
-    return fill_by_value(data, &one, dtype, numel);
-  }
-  case I32: {
-    const int32_t one = 1;
-    return fill_by_value(data, &one, dtype, numel);
-  }
-  case I64: {
-    const int64_t one = 1;
-    return fill_by_value(data, &one, dtype, numel);
-  }
-  case U8: {
-    const uint8_t one = 1;
-    return fill_by_value(data, &one, dtype, numel);
-  }
-  case U16: {
-    const uint16_t one = 1;
-    return fill_by_value(data, &one, dtype, numel);
-  }
-  case U32: {
-    const uint32_t one = 1;
-    return fill_by_value(data, &one, dtype, numel);
-  }
-  case U64: {
-    const uint64_t one = 1;
-    return fill_by_value(data, &one, dtype, numel);
-  }
+  case F32:
+    one.as_f32 = 1.0f;
+    break;
+  case F64:
+    one.as_f64 = 1.0;
+    break;
+  case I8:
+    one.as_i8 = 1;
+    break;
+  case I16:
+    one.as_i16 = 1;
+    break;
+  case I32:
+    one.as_i32 = 1;
+    break;
+  case I64:
+    one.as_i64 = 1;
+    break;
+  case U8:
+    one.as_u8 = 1;
+    break;
+  case U16:
+    one.as_u16 = 1;
+    break;
+  case U32:
+    one.as_u32 = 1;
+    break;
+  case U64:
+    one.as_u64 = 1;
+    break;
   default:
     return false;
   }
+
+  return fill_by_value(data, &one, dtype, numel);
 }
 static void release_tensor(Tensor *t) {
   if (t == NULL)
@@ -397,21 +390,38 @@ static void release_tensor(Tensor *t) {
 
   *t = (Tensor){0};
 }
+/* Allocates shape/strides for tmp and fills contiguous row-major strides.
+ * Releases tmp on failure. */
+static Ten_Status tensor_init_layout(Tensor *tmp, const i64 *shape, i32 rank) {
+  if (!T_allocate_shape(tmp, shape, rank)) {
+    release_tensor(tmp);
+    return status_error(TT_ERR_NO_MEMORY, "shape allocation failed");
+  }
+
+  if (!T_allocate_stride(tmp)) {
+    release_tensor(tmp);
+    return status_error(TT_ERR_NO_MEMORY, "stride allocation failed");
+  }
+
+  if (!T_calculate_strides(tmp->strides, tmp->shape, tmp->rank)) {
+    release_tensor(tmp);
+    return status_error(TT_ERR_OVERFLOW, "stride calculation failed");
+  }
+
+  return status_ok();
+}
 static Ten_Status tensor_create_initialized(Tensor *t, DataType dtype,
                                             const i64 *shape, i32 rank,
                                             Device dev, FillMode mode,
                                             const void *scalar) {
-  /* 1. Validate arguments and destination state. */
   Ten_Status status = T_validate_new_tensor(t, dtype, shape, rank, dev);
 
   if (status.stype != TT_OK)
     return status;
 
-  /* Validate the scalar before allocating anything. */
   if (mode == FILL_FROM_SCALAR && scalar == NULL)
     return (Ten_Status){TT_ERR_INVALID_ARG, "fill scalar is NULL"};
 
-  /* 2. Calculate element count and allocation size. */
   size_t dt_size = T_get_dtype_size(dtype);
   if (dt_size == 0)
     return (Ten_Status){TT_ERR_DTYPE_UNSUPPORTED, "unsupported dtype"};
@@ -431,23 +441,10 @@ static Ten_Status tensor_create_initialized(Tensor *t, DataType dtype,
 
   size_t n_bytes = (size_t)tmp.num_el * dt_size;
 
-  /* 3. Allocate shape and strides. */
-  if (!T_allocate_shape(&tmp, shape, rank)) {
-    release_tensor(&tmp);
-    return (Ten_Status){TT_ERR_NO_MEMORY, "shape allocation failed"};
-  }
+  status = tensor_init_layout(&tmp, shape, rank);
+  if (status.stype != TT_OK)
+    return status;
 
-  if (!T_allocate_stride(&tmp)) {
-    release_tensor(&tmp);
-    return (Ten_Status){TT_ERR_NO_MEMORY, "stride allocation failed"};
-  }
-
-  if (!T_calculate_strides(tmp.strides, tmp.shape, tmp.rank)) {
-    release_tensor(&tmp);
-    return (Ten_Status){TT_ERR_OVERFLOW, "stride calculation failed"};
-  }
-
-  /* Allocate storage metadata. */
   tmp.storage = calloc(1, sizeof(*tmp.storage));
   if (tmp.storage == NULL) {
     release_tensor(&tmp);
@@ -459,19 +456,16 @@ static Ten_Status tensor_create_initialized(Tensor *t, DataType dtype,
     return (Ten_Status){TT_ERR_NO_MEMORY, "tensor data allocation failed"};
   }
 
-  /* 4. Initialize the allocated data. */
   if (!initialize_data(tmp.storage->data, dtype, tmp.num_el, mode, scalar)) {
     release_tensor(&tmp);
     return (Ten_Status){TT_ERR_INTERNAL, "tensor data initialization failed"};
   }
 
-  /* 5. Set storage metadata only after successful initialization. */
   tmp.storage->n_bytes = n_bytes;
   tmp.storage->dtype = dtype;
   tmp.storage->device = dev;
   tmp.storage->ref_count = 1;
 
-  /* 6. Commit the completed tensor to the caller. */
   *t = tmp;
 
   return (Ten_Status){TT_OK, "success"};
@@ -489,42 +483,20 @@ Ten_Status T_create_tensor_storage(TensorStorage **ts, const void *input_data,
     return status_error(TT_ERR_INVALID_STATE,
                         "storage pointer is already initialized");
 
-  size_t dt_size = T_get_dtype_size(dtype);
-
-  if (dt_size == 0)
-    return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported dtype");
-
-  if (n_bytes % dt_size != 0)
-    return status_error(TT_ERR_INVALID_ARG,
-                        "storage size is not aligned to dtype size");
-
   if (n_bytes > 0 && input_data == NULL)
     return status_error(TT_ERR_INVALID_ARG, "input data is NULL");
 
   if (dev.devtype != CPU)
     return status_error(TT_ERR_UNSUPPORTED, "device backend unavailable");
 
-  TensorStorage *st = calloc(1, sizeof(*st));
-  if (st == NULL)
-    return status_error(TT_ERR_NO_MEMORY, "storage metadata allocation failed");
+  Ten_Status status = T_create_empty_storage(ts, dtype, dev, n_bytes);
+  if (status.stype != TT_OK)
+    return status;
 
-  if (!storage_allocate((void **)&st->data, dev, n_bytes)) {
-    free(st);
-    return status_error(TT_ERR_NO_MEMORY, "storage data allocation failed");
-  }
-
-  if (!storage_copy_from_host(st->data, dev, input_data, n_bytes)) {
-    storage_deallocate(st->data, dev);
-    free(st);
+  if (!storage_copy_from_host((*ts)->data, dev, input_data, n_bytes)) {
+    T_storage_release(ts);
     return status_error(TT_ERR_INTERNAL, "storage data copy failed");
   }
-
-  st->n_bytes = n_bytes;
-  st->dtype = dtype;
-  st->device = dev;
-  st->ref_count = 1;
-
-  *ts = st;
 
   return status_ok();
 }
@@ -734,20 +706,9 @@ Ten_Status T_tensor_share_storage(Tensor *dst, TensorStorage *storage,
   if (required_bytes > 0 && storage->data == NULL)
     return status_error(TT_ERR_INVALID_STATE, "storage data is NULL");
 
-  if (!T_allocate_shape(&tmp, input_shape, rank)) {
-    release_tensor(&tmp);
-    return status_error(TT_ERR_NO_MEMORY, "shape allocation failed");
-  }
-
-  if (!T_allocate_stride(&tmp)) {
-    release_tensor(&tmp);
-    return status_error(TT_ERR_NO_MEMORY, "stride allocation failed");
-  }
-
-  if (!T_calculate_strides(tmp.strides, tmp.shape, tmp.rank)) {
-    release_tensor(&tmp);
-    return status_error(TT_ERR_OVERFLOW, "stride calculation failed");
-  }
+  Ten_Status status = tensor_init_layout(&tmp, input_shape, rank);
+  if (status.stype != TT_OK)
+    return status;
 
   if (!T_storage_retain(storage)) {
     release_tensor(&tmp);
@@ -810,20 +771,9 @@ Ten_Status T_create_tensor_by_data(Tensor *t, const void *input_data,
   if (n_bytes > 0 && input_data == NULL)
     return status_error(TT_ERR_INVALID_ARG, "input data is NULL");
 
-  if (!T_allocate_shape(&tmp, i_shape, i_ranks)) {
-    release_tensor(&tmp);
-    return status_error(TT_ERR_NO_MEMORY, "shape allocation failed");
-  }
-
-  if (!T_allocate_stride(&tmp)) {
-    release_tensor(&tmp);
-    return status_error(TT_ERR_NO_MEMORY, "stride allocation failed");
-  }
-
-  if (!T_calculate_strides(tmp.strides, tmp.shape, tmp.rank)) {
-    release_tensor(&tmp);
-    return status_error(TT_ERR_OVERFLOW, "stride calculation failed");
-  }
+  status = tensor_init_layout(&tmp, i_shape, i_ranks);
+  if (status.stype != TT_OK)
+    return status;
 
   status =
       T_create_tensor_storage(&tmp.storage, input_data, i_dtype, dev, n_bytes);
@@ -943,24 +893,12 @@ Ten_Status T_tensor_reshape(Tensor *dst, const Tensor *src, const i64 *shape,
   tmp.offset = 0;
 
   /* Allocate destination metadata. */
+  Ten_Status status = tensor_init_layout(&tmp, shape, rank);
+  if (status.stype != TT_OK)
+    return status;
 
-  if (!T_allocate_shape(&tmp, shape, rank)) {
-    release_tensor(&tmp);
-    return status_error(TT_ERR_NO_MEMORY, "shape allocation failed");
-  }
-
-  if (!T_allocate_stride(&tmp)) {
-    release_tensor(&tmp);
-    return status_error(TT_ERR_NO_MEMORY, "stride allocation failed");
-  }
-
-  if (!T_calculate_strides(tmp.strides, tmp.shape, tmp.rank)) {
-    release_tensor(&tmp);
-    return status_error(TT_ERR_INVALID_STATE, "stride calculation failed");
-  }
-
-  Ten_Status status = T_create_empty_storage(&tmp.storage, src->storage->dtype,
-                                             src->storage->device, n_bytes);
+  status = T_create_empty_storage(&tmp.storage, src->storage->dtype,
+                                  src->storage->device, n_bytes);
 
   if (status.stype != TT_OK) {
     release_tensor(&tmp);
@@ -981,100 +919,16 @@ static bool fill_by_value(void *data, const void *scalar, const DataType dtype,
   if (numel < 0 || scalar == NULL || (numel > 0 && data == NULL))
     return false;
 
-  switch (dtype) {
-  case F32: {
-    const float value = *(const float *)scalar;
-    float *dst = (float *)data;
+  size_t dt_size = T_get_dtype_size(dtype);
 
-    for (i64 i = 0; i < numel; ++i)
-      dst[i] = value;
-    break;
-  }
-
-  case F64: {
-    const double value = *(const double *)scalar;
-    double *dst = (double *)data;
-
-    for (i64 i = 0; i < numel; ++i)
-      dst[i] = value;
-    break;
-  }
-
-  case I8: {
-    const int8_t value = *(const int8_t *)scalar;
-    int8_t *dst = (int8_t *)data;
-
-    for (i64 i = 0; i < numel; ++i)
-      dst[i] = value;
-    break;
-  }
-
-  case I16: {
-    const int16_t value = *(const int16_t *)scalar;
-    int16_t *dst = (int16_t *)data;
-
-    for (i64 i = 0; i < numel; ++i)
-      dst[i] = value;
-    break;
-  }
-
-  case I32: {
-    const int32_t value = *(const int32_t *)scalar;
-    int32_t *dst = (int32_t *)data;
-
-    for (i64 i = 0; i < numel; ++i)
-      dst[i] = value;
-    break;
-  }
-
-  case I64: {
-    const int64_t value = *(const int64_t *)scalar;
-    int64_t *dst = (int64_t *)data;
-
-    for (i64 i = 0; i < numel; ++i)
-      dst[i] = value;
-    break;
-  }
-
-  case U8: {
-    const uint8_t value = *(const uint8_t *)scalar;
-    uint8_t *dst = (uint8_t *)data;
-
-    for (i64 i = 0; i < numel; ++i)
-      dst[i] = value;
-    break;
-  }
-
-  case U16: {
-    const uint16_t value = *(const uint16_t *)scalar;
-    uint16_t *dst = (uint16_t *)data;
-
-    for (i64 i = 0; i < numel; ++i)
-      dst[i] = value;
-    break;
-  }
-
-  case U32: {
-    const uint32_t value = *(const uint32_t *)scalar;
-    uint32_t *dst = (uint32_t *)data;
-
-    for (i64 i = 0; i < numel; ++i)
-      dst[i] = value;
-    break;
-  }
-
-  case U64: {
-    const uint64_t value = *(const uint64_t *)scalar;
-    uint64_t *dst = (uint64_t *)data;
-
-    for (i64 i = 0; i < numel; ++i)
-      dst[i] = value;
-    break;
-  }
-
-  default:
+  /* Complex fill is unsupported (unchanged behaviour). */
+  if (dt_size == 0 || T_is_dtype_complex(dtype))
     return false;
-  }
+
+  unsigned char *dst = (unsigned char *)data;
+
+  for (i64 i = 0; i < numel; ++i)
+    memcpy(dst + (size_t)i * dt_size, scalar, dt_size);
 
   return true;
 }

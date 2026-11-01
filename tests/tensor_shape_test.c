@@ -32,15 +32,7 @@ size_t T_get_dtype_size(DataType dtype) {
   }
 }
 
-static int tests_run;
-#define CHECK(expr)                                                            \
-  do {                                                                         \
-    ++tests_run;                                                               \
-    if (!(expr)) {                                                             \
-      fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #expr);          \
-      return 1;                                                                \
-    }                                                                          \
-  } while (0)
+#include "./tensor_checker.h"
 
 static uint32_t rng_state = UINT32_C(0x5eed1234);
 static uint32_t next_random(void) {
@@ -77,19 +69,19 @@ static int test_known_strides(void) {
   i64 strides3[3] = {-1, -1, -1};
   i64 strides_empty[3] = {-1, -1, -1};
 
-  CHECK(calculate_strides(strides2, shape2, 2));
+  CHECK(T_calculate_strides(strides2, shape2, 2));
   CHECK(strides2[0] == 3 && strides2[1] == 1);
 
-  CHECK(calculate_strides(strides3, shape3, 3));
+  CHECK(T_calculate_strides(strides3, shape3, 3));
   CHECK(strides3[0] == 12 && strides3[1] == 4 && strides3[2] == 1);
 
-  CHECK(calculate_strides(strides_empty, shape_empty, 3));
+  CHECK(T_calculate_strides(strides_empty, shape_empty, 3));
   CHECK(strides_empty[0] == 0 && strides_empty[1] == 4 &&
         strides_empty[2] == 1);
 
-  CHECK(calculate_strides(NULL, NULL, 0));
-  CHECK(!calculate_strides(NULL, shape2, 2));
-  CHECK(!calculate_strides(strides2, NULL, 2));
+  CHECK(T_calculate_strides(NULL, NULL, 0));
+  CHECK(!T_calculate_strides(NULL, shape2, 2));
+  CHECK(!T_calculate_strides(strides2, NULL, 2));
   return 0;
 }
 
@@ -119,7 +111,7 @@ static int test_randomized_shapes_and_strides(void) {
       i64 count = 0;
       T_get_numel(0, NULL, &count);
       CHECK(count == 1);
-      CHECK(calculate_strides(NULL, NULL, 0));
+      CHECK(T_calculate_strides(NULL, NULL, 0));
       continue;
     }
 
@@ -129,7 +121,7 @@ static int test_randomized_shapes_and_strides(void) {
       CHECK(actual_numel == expected_numel);
     }
 
-    CHECK(calculate_strides(strides, shape, rank));
+    CHECK(T_calculate_strides(strides, shape, rank));
     for (i = rank - 1; i >= 0; --i) {
       CHECK(strides[i] == expected_stride);
       expected_stride *= shape[i];

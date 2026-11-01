@@ -14,7 +14,7 @@
 
 #include "../include/ten/ten_status.h"
 #include "../include/ten/ten_types.h"
-
+#include "./tensor_checker.h"
 /* Fault-injection wrappers. */
 static size_t allocation_calls;
 static size_t fail_allocation_at;
@@ -75,29 +75,6 @@ size_t get_dtype_size(DataType dtype) {
   }
 }
 
-static int tests_run;
-
-#define CHECK(expr)                                                            \
-  do {                                                                         \
-    ++tests_run;                                                               \
-    if (!(expr)) {                                                             \
-      fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #expr);          \
-      return 1;                                                                \
-    }                                                                          \
-  } while (0)
-
-#define CHECK_STATUS(expr, expected)                                           \
-  do {                                                                         \
-    Ten_Status status_check = (expr);                                          \
-    ++tests_run;                                                               \
-    if (status_check.stype != (expected)) {                                    \
-      fprintf(stderr, "FAIL %s:%d: expected status %d, got %d (%s)\n",         \
-              __FILE__, __LINE__, (expected), status_check.stype,              \
-              status_check.msg ? status_check.msg : "no message");             \
-      return 1;                                                                \
-    }                                                                          \
-  } while (0)
-
 static Device cpu_device(void) { return (Device){.devtype = CPU, .id = 0}; }
 
 static int tensor_is_empty(const Tensor *t) {
@@ -105,9 +82,9 @@ static int tensor_is_empty(const Tensor *t) {
          t->strides == NULL && t->rank == 0 && t->offset == 0 && t->num_el == 0;
 }
 
-/* --------------------------------------------------------- */
+/*  */
 /* Arithmetic tests                                           */
-/* --------------------------------------------------------- */
+/*  */
 
 static int test_element_count_overflow(void) {
   const i64 over_i64[] = {I64_MAX, 2};
@@ -137,9 +114,9 @@ static int test_shape_byte_size_overflow(void) {
   return 0;
 }
 
-/* --------------------------------------------------------- */
+/*  */
 /* Status validation tests                                    */
-/* --------------------------------------------------------- */
+/*  */
 
 static int test_success_status(void) {
   const i64 shape[] = {2, 3};
@@ -226,9 +203,9 @@ static int test_unsupported_device_status(void) {
   return 0;
 }
 
-/* --------------------------------------------------------- */
+/*  */
 /* Allocation failure tests                                   */
-/* --------------------------------------------------------- */
+/*  */
 
 static int test_allocation_failures_leave_empty_tensor(void) {
   const i64 shape[] = {2, 3};
@@ -268,7 +245,6 @@ static int test_allocation_failures_leave_empty_tensor(void) {
 
     CHECK(tensor_is_empty(&t));
 
-    /* Safe even if construction partially initialized the object. */
     T_destroy_tensor(&t);
   }
 
@@ -278,9 +254,9 @@ static int test_allocation_failures_leave_empty_tensor(void) {
   return 0;
 }
 
-/* --------------------------------------------------------- */
+/*  */
 /* Other constructor status tests                             */
-/* --------------------------------------------------------- */
+/*  */
 
 static int test_initialization_status(void) {
   const i64 shape[] = {2, 2};
@@ -323,7 +299,7 @@ static int test_fill_null_scalar_status(void) {
   return 0;
 }
 
-/* --------------------------------------------------------- */
+/*  */
 
 int main(void) {
   if (test_element_count_overflow() || test_shape_byte_size_overflow() ||

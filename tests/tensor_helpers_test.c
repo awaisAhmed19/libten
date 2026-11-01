@@ -13,16 +13,7 @@
 
 #include "../src/core/ten_tensor.c"
 
-static int tests_run;
-
-#define CHECK(expr)                                                            \
-  do {                                                                         \
-    ++tests_run;                                                               \
-    if (!(expr)) {                                                             \
-      fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #expr);          \
-      return 1;                                                                \
-    }                                                                          \
-  } while (0)
+#include "./tensor_checker.h"
 
 static int test_rank_validation(void) {
   CHECK(T_is_ranks_valid(0));
