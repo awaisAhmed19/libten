@@ -1,5 +1,6 @@
 #include "ten/ten_tensor.h"
 #include "internal/ten_tensor.h"
+#include "internal/ten_backend.h"
 #include "ten/ten_status.h"
 #include "ten/ten_types.h"
 #include <stdio.h>
@@ -9,10 +10,10 @@
 #include <cuda_runtime_api.h>
 #endif
 
-typedef enum { FILL_FROM_SCALAR, FILL_ONES, FILL_ZEROS } FillMode;
+typedef enum { FROM_SCALAR, ONES, ZEROS } FillMode;
 
-static bool fill_by_value(void *data, const void *scalar, const DataType dtype,
-                          const i64 numel);
+static bool by_value(void *data, const void *scalar, const DataType dtype,
+                     const i64 numel);
 bool T_is_ranks_valid(const i32 ranks) {
   return 0 <= ranks && ranks <= TT_MAX_RANK;
 }
@@ -93,7 +94,6 @@ bool T_get_shape(const Tensor *t, i64 *shape_out, i32 capacity) {
 i64 T_get_dim(const Tensor *t, i32 dim);
 
 DataType T_get_dtype(const Tensor *t) {
-
   if (t == NULL || t->storage == NULL) {
     fprintf(stderr, "ERR: invalid input tensor pointer or tensor-> storage is "
                     "null, to get dtype");
@@ -312,6 +312,7 @@ Ten_Status T_validate_new_tensor(const Tensor *t, DataType dtype,
 
   return (Ten_Status){TT_OK, "success"};
 }
+
 static bool initialize_data(void *data, DataType dtype, i64 numel,
                             FillMode mode, const void *scalar) {
   if (numel < 0)
@@ -320,15 +321,15 @@ static bool initialize_data(void *data, DataType dtype, i64 numel,
   if (numel == 0)
     return true;
 
-  if (mode == FILL_FROM_SCALAR)
-    return fill_by_value(data, scalar, dtype, numel);
+  if (mode == FROM_SCALAR)
+    return by_value(data, scalar, dtype, numel);
 
-  if (mode == FILL_ZEROS) {
+  if (mode == ZEROS) {
     memset(data, 0, (size_t)numel * T_get_dtype_size(dtype));
     return true;
   }
 
-  /* FILL_ONES: build a dtype-aware "one", then fill with it. */
+  /* ONES: build a dtype-aware "one", then fill with it. */
   union {
     float as_f32;
     double as_f64;
@@ -377,7 +378,7 @@ static bool initialize_data(void *data, DataType dtype, i64 numel,
     return false;
   }
 
-  return fill_by_value(data, &one, dtype, numel);
+  return by_value(data, &one, dtype, numel);
 }
 static void release_tensor(Tensor *t) {
   if (t == NULL)
@@ -418,7 +419,7 @@ static Ten_Status tensor_create_initialized(Tensor *t, DataType dtype,
   if (status.stype != TT_OK)
     return status;
 
-  if (mode == FILL_FROM_SCALAR && scalar == NULL)
+  if (mode == FROM_SCALAR && scalar == NULL)
     return (Ten_Status){TT_ERR_INVALID_ARG, "fill scalar is NULL"};
 
   size_t dt_size = T_get_dtype_size(dtype);
@@ -923,8 +924,9 @@ Ten_Status T_tensor_reshape(Tensor *dst, const Tensor *src, const i64 *shape,
 
   return status_ok();
 }
-static bool fill_by_value(void *data, const void *scalar, const DataType dtype,
-                          const i64 numel) {
+
+static bool by_value(void *data, const void *scalar, const DataType dtype,
+                     const i64 numel) {
   if (numel < 0 || scalar == NULL || (numel > 0 && data == NULL))
     return false;
 
@@ -941,21 +943,20 @@ static bool fill_by_value(void *data, const void *scalar, const DataType dtype,
 
   return true;
 }
-Ten_Status T_tensor_fill_ones(Tensor *t, const DataType dtype, const i64 *shape,
-                              const i32 rank, const Device dev) {
-  return tensor_create_initialized(t, dtype, shape, rank, dev, FILL_ONES, NULL);
+
+Ten_Status T_tensor_ones(Tensor *t, const DataType dtype, const i64 *shape,
+                         const i32 rank, const Device dev) {
+  return tensor_create_initialized(t, dtype, shape, rank, dev, ONES, NULL);
 }
 
-Ten_Status T_tensor_fill_zeros(Tensor *t, const DataType dtype,
-                               const i64 *shape, const i32 rank,
-                               const Device dev) {
-  return tensor_create_initialized(t, dtype, shape, rank, dev, FILL_ZEROS,
-                                   NULL);
+Ten_Status T_tensor_zeros(Tensor *t, const DataType dtype, const i64 *shape,
+                          const i32 rank, const Device dev) {
+  return tensor_create_initialized(t, dtype, shape, rank, dev, ZEROS, NULL);
 }
 
-Ten_Status T_tensor_fill_value(Tensor *t, const DataType dtype,
-                               const i64 *shape, const i32 rank,
-                               const Device dev, const void *scalar) {
-  return tensor_create_initialized(t, dtype, shape, rank, dev, FILL_FROM_SCALAR,
+Ten_Status T_tensor_fill_value(Tensor *t, const DataType dtype, const i64 *shape,
+                          const i32 rank, const Device dev,
+                          const void *scalar) {
+  return tensor_create_initialized(t, dtype, shape, rank, dev, FROM_SCALAR,
                                    scalar);
 }

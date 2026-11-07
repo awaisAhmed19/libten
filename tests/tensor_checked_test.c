@@ -266,8 +266,8 @@ static int test_initialization_status(void) {
   Tensor zeros = {0};
   Tensor filled = {0};
 
-  CHECK_STATUS(T_tensor_fill_ones(&ones, F32, shape, 2, cpu_device()), TT_OK);
-  CHECK_STATUS(T_tensor_fill_zeros(&zeros, F32, shape, 2, cpu_device()), TT_OK);
+  CHECK_STATUS(T_tensor_ones(&ones, F32, shape, 2, cpu_device()), TT_OK);
+  CHECK_STATUS(T_tensor_zeros(&zeros, F32, shape, 2, cpu_device()), TT_OK);
   CHECK_STATUS(
       T_tensor_fill_value(&filled, F32, shape, 2, cpu_device(), &scalar),
       TT_OK);

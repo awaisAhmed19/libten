@@ -56,6 +56,14 @@ Run tests if the test target is available:
 ctest --test-dir build --output-on-failure
 ```
 
+or simply run 
+
+
+```sh
+chmod +x build.sh
+./build.sh clean && ./build.sh test #to build clean and run test
+./build.sh help #for more command help
+```
 CUDA is intended to be detected automatically. If CUDA is unavailable, the build should use the CPU backend. The exact options and target names may change during early development; check the current `CMakeLists.txt` for the supported configuration.
 
 ## Design principles

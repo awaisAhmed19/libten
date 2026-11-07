@@ -37,9 +37,6 @@ extern bool T_allocate_stride(Tensor *t);
 extern bool T_calculate_strides(i64 *strides, const i64 *shape, i32 rank);
 extern bool T_storage_retain(TensorStorage *storage);
 extern void T_storage_release(TensorStorage **storage);
-extern Ten_Status T_create_empty_storage(TensorStorage **storage,
-                                         DataType dtype, Device device,
-                                         size_t n_bytes);
 extern bool T_validate_tensor_bounds(const Tensor *t);
 extern Ten_Status T_validate_new_tensor(const Tensor *t, DataType dtype,
                                         const i64 *shape, i32 rank, Device dev);

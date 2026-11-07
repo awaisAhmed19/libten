@@ -1,5 +1,7 @@
 #include "internal/ten_tensor.h"
 #include "ten/ten_tensor.h"
+#include "ten/ten_view.h"
+#include "internal/ten_backend.h"
 #include <string.h>
 
 bool T_is_permutation(const i64 *dims, i32 rank) {

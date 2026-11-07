@@ -1,6 +1,7 @@
 
 #include "internal/ten_tensor.h"
 #include "ten/ten_tensor.h"
+#include "ten/ten_view.h"
 
 #include <stdio.h>
 #include <stdlib.h>
