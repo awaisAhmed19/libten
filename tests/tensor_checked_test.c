@@ -266,10 +266,11 @@ static int test_initialization_status(void) {
   Tensor zeros = {0};
   Tensor filled = {0};
 
-  CHECK_STATUS(T_tensor_ones(&ones, F32, shape, 2, cpu_device()), TT_OK);
-  CHECK_STATUS(T_tensor_zero(&zeros, F32, shape, 2, cpu_device()), TT_OK);
-  CHECK_STATUS(T_tensor_fill(&filled, F32, shape, 2, cpu_device(), &scalar),
-               TT_OK);
+  CHECK_STATUS(T_tensor_fill_ones(&ones, F32, shape, 2, cpu_device()), TT_OK);
+  CHECK_STATUS(T_tensor_fill_zeros(&zeros, F32, shape, 2, cpu_device()), TT_OK);
+  CHECK_STATUS(
+      T_tensor_fill_value(&filled, F32, shape, 2, cpu_device(), &scalar),
+      TT_OK);
 
   const float *ones_data = (const float *)ones.storage->data;
   const float *zeros_data = (const float *)zeros.storage->data;
@@ -292,7 +293,7 @@ static int test_fill_null_scalar_status(void) {
   const i64 shape[] = {2};
   Tensor t = {0};
 
-  CHECK_STATUS(T_tensor_fill(&t, F32, shape, 1, cpu_device(), NULL),
+  CHECK_STATUS(T_tensor_fill_value(&t, F32, shape, 1, cpu_device(), NULL),
                TT_ERR_INVALID_ARG);
 
   CHECK(tensor_is_empty(&t));
