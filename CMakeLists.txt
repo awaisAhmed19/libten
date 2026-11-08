@@ -161,10 +161,10 @@ endif()
 #
 
 if(BUILD_TESTING)
-  function(ten_add_test test_name source_file)
-    set(target_name "ten_${test_name}_tests")
 
-    add_executable(${target_name} "tests/${source_file}")
+  # * Common test configuration -
+
+  function(ten_configure_test target_name)
     target_link_libraries(${target_name} PRIVATE ten)
 
     target_include_directories(
@@ -172,10 +172,22 @@ if(BUILD_TESTING)
                              ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
     target_compile_features(${target_name} PRIVATE c_std_11)
+
+    ten_enable_sanitizers(${target_name})
+  endfunction()
+
+  # * CPU / general tests -
+
+  function(ten_add_test test_name source_file)
+    set(target_name "ten_${test_name}_tests")
+
+    add_executable(${target_name} "tests/${source_file}")
+
+    ten_configure_test(${target_name})
+
     if(TEN_CUDA_AVAILABLE)
       target_compile_definitions(${target_name} PRIVATE TEN_TEST_HAS_CUDA=1)
     endif()
-    ten_enable_sanitizers(${target_name})
 
     add_test(NAME ${test_name} COMMAND ${target_name})
   endfunction()
@@ -187,6 +199,34 @@ if(BUILD_TESTING)
   ten_add_test(tensor tensor_test.c)
   ten_add_test(checked tensor_checked_test.c)
   ten_add_test(views tensor_views_test.c)
+
+  # * CUDA memory and copy tests -
+
+  if(TEN_CUDA_AVAILABLE)
+
+    function(ten_add_cuda_test test_name source_file)
+      set(target_name "ten_${test_name}_tests")
+
+      add_executable(${target_name} "tests/cuda/${source_file}")
+
+      ten_configure_test(${target_name})
+
+      target_include_directories(
+        ${target_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/cuda
+                               ${CUDAToolkit_INCLUDE_DIRS})
+
+      target_link_libraries(${target_name} PRIVATE CUDA::cudart)
+
+      add_test(NAME ${test_name} COMMAND ${target_name})
+
+      set_tests_properties(${test_name} PROPERTIES SKIP_RETURN_CODE 77)
+    endfunction()
+
+    ten_add_cuda_test(cuda_memory cuda_memory_test.c)
+    ten_add_cuda_test(cuda_copy cuda_copy_test.c)
+
+  endif()
+
 endif()
 
 #

@@ -114,6 +114,7 @@ do_build() {
 		-G Ninja \
 		-DCMAKE_BUILD_TYPE="$build_type" \
 		-DTEN_ENABLE_CUDA="$cuda_enabled" \
+		-DCUDAToolkit_ROOT=/opt/cuda \
 		-DENABLE_SANITIZERS="$ENABLE_SANITIZERS" \
 		-DBUILD_TESTING=ON \
 		-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
