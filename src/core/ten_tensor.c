@@ -192,23 +192,23 @@ bool T_calculate_strides(i64 *strides, const i64 *shape, i32 rank) {
 }
 static void free_shape(i64 *shape) { free(shape); }
 static void free_strides(i64 *strides) { free(strides); }
-static bool storage_allocate(void **out, Device device, size_t n_bytes) {
+static Ten_Status storage_allocate(void **out, Device device, size_t n_bytes) {
   if (out == NULL)
-    return false;
+    return status_error(TT_ERR_INVALID_ARG, "output pointer is NULL");
 
   *out = NULL;
 
-  if (n_bytes == 0)
-    return true;
-
   const Ten_Backend *backend = T_get_backend(device);
 
-  if (backend == NULL || backend->memory.allocate == NULL)
-    return false;
+  if (backend == NULL)
+    return status_error(TT_ERR_UNSUPPORTED,
+                        "requested device backend is unavailable");
 
-  Ten_Status status = backend->memory.allocate(out, n_bytes);
+  if (backend->memory.allocate == NULL)
+    return status_error(TT_ERR_INVALID_STATE,
+                        "backend allocation function is missing");
 
-  return status.stype == TT_OK;
+  return backend->memory.allocate(out, n_bytes);
 }
 
 static bool storage_copy_from_host(void *dst, Device device, const void *src,
@@ -452,9 +452,10 @@ static Ten_Status tensor_create_initialized(Tensor *t, DataType dtype,
     return (Ten_Status){TT_ERR_NO_MEMORY, "storage metadata allocation failed"};
   }
 
-  if (!storage_allocate((void **)&tmp.storage->data, dev, n_bytes)) {
+  status = storage_allocate((void **)&tmp.storage->data, dev, n_bytes);
+  if (status.stype != TT_OK) {
     release_tensor(&tmp);
-    return (Ten_Status){TT_ERR_NO_MEMORY, "tensor data allocation failed"};
+    return status;
   }
 
   if (!initialize_data(tmp.storage->data, dtype, tmp.num_el, mode, scalar)) {
@@ -523,9 +524,10 @@ Ten_Status T_create_empty_storage(TensorStorage **storage, DataType dtype,
   if (tmp == NULL)
     return status_error(TT_ERR_NO_MEMORY, "storage metadata allocation failed");
 
-  if (!storage_allocate((void **)&tmp->data, device, n_bytes)) {
+  Ten_Status status = storage_allocate((void **)&tmp->data, device, n_bytes);
+  if (status.stype != TT_OK) {
     free(tmp);
-    return status_error(TT_ERR_NO_MEMORY, "storage data allocation failed");
+    return status_error(status.stype, status.msg);
   }
 
   tmp->n_bytes = n_bytes;
