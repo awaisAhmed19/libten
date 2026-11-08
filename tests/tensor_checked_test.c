@@ -194,12 +194,27 @@ static int test_unsupported_device_status(void) {
   const i64 shape[] = {2};
   const float values[] = {1, 2};
   Tensor t = {0};
-  Device unsupported = {.devtype = CUDA, .id = 0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&t, values, F32, shape, 1, unsupported),
+#ifdef TEN_TEST_HAS_CUDA
+
+  Device device = {.devtype = CUDA, .id = 0};
+
+  CHECK_STATUS(T_create_tensor_by_data(&t, values, F32, shape, 1, device),
                TT_OK);
 
+  CHECK(!tensor_is_empty(&t));
+
+#else
+
+  Device device = {.devtype = CUDA, .id = 0};
+
+  CHECK_STATUS(T_create_tensor_by_data(&t, values, F32, shape, 1, device),
+               TT_ERR_UNSUPPORTED);
+
   CHECK(tensor_is_empty(&t));
+
+#endif
+
   return 0;
 }
 
