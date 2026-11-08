@@ -172,6 +172,9 @@ if(BUILD_TESTING)
                              ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
     target_compile_features(${target_name} PRIVATE c_std_11)
+    if(TEN_CUDA_AVAILABLE)
+      target_compile_definitions(${target_name} PRIVATE TEN_TEST_HAS_CUDA=1)
+    endif()
     ten_enable_sanitizers(${target_name})
 
     add_test(NAME ${test_name} COMMAND ${target_name})
