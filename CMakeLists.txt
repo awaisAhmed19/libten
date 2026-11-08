@@ -16,7 +16,6 @@ include(CTest)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
-
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -32,19 +31,21 @@ set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release
 # Build options
 #
 
-option(TEN_ENABLE_CUDA "Enable NVIDIA CUDA backend" OFF)
-option(ENABLE_SANITIZERS "Enable runtime sanitizers" OFF)
+option(TEN_ENABLE_CUDA "Build libten with the NVIDIA CUDA backend" OFF)
+option(ENABLE_SANITIZERS
+       "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+
+set(TEN_CUDA_ARCHITECTURES
+    "75"
+    CACHE STRING "CUDA architectures to compile for (for example: 75 or 75;86)")
 
 #
 # Sanitizers
 #
 
 if(ENABLE_SANITIZERS)
-  if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    set(TEN_SANITIZER_FLAGS -fsanitize=address,undefined
-                            -fno-sanitize-recover=all -fno-omit-frame-pointer)
-  else()
-    message(FATAL_ERROR "Sanitizers require GCC or Clang")
+  if(NOT CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    message(FATAL_ERROR "ENABLE_SANITIZERS requires GCC or Clang.")
   endif()
 endif()
 
@@ -55,12 +56,16 @@ function(ten_enable_sanitizers target)
       PRIVATE $<$<COMPILE_LANGUAGE:C>:-fsanitize=address,undefined>
               $<$<COMPILE_LANGUAGE:C>:-fno-sanitize-recover=all>
               $<$<COMPILE_LANGUAGE:C>:-fno-omit-frame-pointer>)
-    target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+    target_link_options(${target} PRIVATE -fsanitize=address,undefined
+                        -fno-sanitize-recover=all)
   endif()
 endfunction()
 
 #
-# CUDA detection
+# Explicit CUDA configuration
+#
+# CUDA is OFF by default. When ON, CUDA is required: configuration fails rather
+# than silently producing a CPU-only build.
 #
 
 set(TEN_CUDA_AVAILABLE OFF)
@@ -70,29 +75,31 @@ if(TEN_ENABLE_CUDA)
   check_language(CUDA)
 
   if(NOT CMAKE_CUDA_COMPILER)
-    message(FATAL_ERROR "TEN_ENABLE_CUDA is ON, but nvcc was not found.")
+    message(
+      FATAL_ERROR
+        "TEN_ENABLE_CUDA=ON, but no CUDA compiler (nvcc) was found. "
+        "Install the CUDA Toolkit or configure with -DTEN_ENABLE_CUDA=OFF.")
   endif()
 
   enable_language(CUDA)
-
   find_package(CUDAToolkit REQUIRED)
 
   set(CMAKE_CUDA_STANDARD 17)
   set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-
-  set(CMAKE_CUDA_ARCHITECTURES
-      75
-      CACHE STRING "NVIDIA CUDA architectures")
+  set(CMAKE_CUDA_EXTENSIONS OFF)
+  set(CMAKE_CUDA_ARCHITECTURES "${TEN_CUDA_ARCHITECTURES}")
 
   set(TEN_CUDA_AVAILABLE ON)
 
-  message(STATUS "CUDA compiler: ${CMAKE_CUDA_COMPILER}")
-  message(STATUS "CUDA version : ${CMAKE_CUDA_COMPILER_VERSION}")
-  message(STATUS "CUDA arch    : ${CMAKE_CUDA_ARCHITECTURES}")
+  message(STATUS "CUDA compiler : ${CMAKE_CUDA_COMPILER}")
+  message(STATUS "CUDA version  : ${CMAKE_CUDA_COMPILER_VERSION}")
+  message(STATUS "CUDA arch     : ${CMAKE_CUDA_ARCHITECTURES}")
+else()
+  message(STATUS "CUDA backend  : explicitly disabled")
 endif()
 
 #
-# Core and CPU sources
+# Sources
 #
 
 set(TEN_SOURCES
@@ -104,10 +111,6 @@ set(TEN_SOURCES
     src/backend/cpu/ten_memory.c
     src/backend/cpu/ten_ops.c)
 
-#
-# CUDA sources
-#
-
 if(TEN_CUDA_AVAILABLE)
   list(APPEND TEN_SOURCES src/backend/cuda/ten_memory.cu)
 endif()
@@ -117,7 +120,6 @@ endif()
 #
 
 add_library(ten ${TEN_SOURCES})
-
 add_library(libten::ten ALIAS ten)
 
 target_compile_features(ten PUBLIC c_std_11)
@@ -139,23 +141,19 @@ set_target_properties(
 ten_enable_sanitizers(ten)
 
 #
-# CUDA configuration
+# CUDA target configuration
 #
 
 if(TEN_CUDA_AVAILABLE)
   target_compile_definitions(ten PRIVATE USE_CUDA=1)
-
   target_link_libraries(ten PRIVATE CUDA::cudart)
 
   set_target_properties(
     ten
     PROPERTIES CUDA_STANDARD 17
                CUDA_STANDARD_REQUIRED ON
-               CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
-
-  message(STATUS "libten backend: CPU + CUDA")
-else()
-  message(STATUS "libten backend: CPU only")
+               CUDA_EXTENSIONS OFF
+               CUDA_ARCHITECTURES "${TEN_CUDA_ARCHITECTURES}")
 endif()
 
 #
@@ -163,13 +161,10 @@ endif()
 #
 
 if(BUILD_TESTING)
-
   function(ten_add_test test_name source_file)
-
     set(target_name "ten_${test_name}_tests")
 
-    add_executable(${target_name} tests/${source_file})
-
+    add_executable(${target_name} "tests/${source_file}")
     target_link_libraries(${target_name} PRIVATE ten)
 
     target_include_directories(
@@ -177,11 +172,9 @@ if(BUILD_TESTING)
                              ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
     target_compile_features(${target_name} PRIVATE c_std_11)
-
     ten_enable_sanitizers(${target_name})
 
     add_test(NAME ${test_name} COMMAND ${target_name})
-
   endfunction()
 
   ten_add_test(helpers tensor_helpers_test.c)
@@ -191,7 +184,6 @@ if(BUILD_TESTING)
   ten_add_test(tensor tensor_test.c)
   ten_add_test(checked tensor_checked_test.c)
   ten_add_test(views tensor_views_test.c)
-
 endif()
 
 #
@@ -213,19 +205,24 @@ install(
   EXPORT libtenTargets
   FILE libtenTargets.cmake
   NAMESPACE libten::
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ten)
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ten")
 
 #
 # Build summary
 #
+
+if(TEN_CUDA_AVAILABLE)
+  set(TEN_BACKEND_NAME "CPU + CUDA")
+else()
+  set(TEN_BACKEND_NAME "CPU only")
+endif()
 
 message(STATUS "")
 message(STATUS "libten ${PROJECT_VERSION}")
 message(
   STATUS "C compiler : ${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}")
 message(STATUS "C standard : C11")
-message(
-  STATUS "Backend    : $<IF:$<BOOL:${TEN_CUDA_AVAILABLE}>,CPU + CUDA,CPU only>")
+message(STATUS "Backend    : ${TEN_BACKEND_NAME}")
 message(STATUS "Build type : ${CMAKE_BUILD_TYPE}")
 message(STATUS "Build dir  : ${CMAKE_BINARY_DIR}")
 message(STATUS "")

@@ -1,28 +1,24 @@
 #!/usr/bin/env bash
-# =============================================================================
-# build.sh — libten build script
+# build.sh — explicit CPU/CUDA build driver for libten.
 #
-# Commands:
-#   ./build.sh                       — Debug build (default)
-#   ./build.sh debug                 — Debug build
-#   ./build.sh release               — Release build
-#   ./build.sh relwithdebinfo        — RelWithDebInfo build
-#   ./build.sh clean                 — Remove build directories
-#   ./build.sh test                  — Debug build and run tests
-#   ./build.sh test release          — Release build and run tests
-#   ./build.sh install               — Build and install libten
-#   ./build.sh help                  — Show usage
+# Usage:
+#   ./build.sh                         # CPU Debug build
+#   ./build.sh cpu [debug|release|relwithdebinfo]
+#   ./build.sh cuda [debug|release|relwithdebinfo]
+#   ./build.sh test [cpu|cuda] [debug|release|relwithdebinfo]
+#   ./build.sh install [cpu|cuda] [debug|release|relwithdebinfo]
+#   ./build.sh clean
+#   ./build.sh help
 #
-# CUDA is detected automatically. If unavailable, the CPU backend is built.
+# CUDA is NEVER auto-detected/enabled. Choose "cuda" explicitly.
 #
-# Optional:
-#   CUDA_ARCH=75 ./build.sh debug    — Target NVIDIA T4
-#   CUDA_ARCH=86 ./build.sh release  — Target compute capability 8.6
-#   BUILD_JOBS=8 ./build.sh debug    — Override parallel build jobs
-#   INSTALL_PREFIX="$HOME/.local" ./build.sh install
-# =============================================================================
+# Optional environment:
+#   CUDA_ARCH=75                  CUDA architecture (default: 75)
+#   BUILD_JOBS=8                  Parallel build jobs
+#   ENABLE_SANITIZERS=ON          Enable ASan + UBSan
+#   INSTALL_PREFIX="$HOME/.local" Installation prefix
 
-set -euo pipefail
+set -Eeuo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -31,268 +27,224 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 RESET='\033[0m'
 
-log_info() { echo -e "${CYAN}[build]${RESET} $*"; }
-log_ok() { echo -e "${GREEN}[build]${RESET} $*"; }
-log_warn() { echo -e "${YELLOW}[build]${RESET} $*"; }
-log_error() { echo -e "${RED}[build]${RESET} $*" >&2; }
-
-log_section() {
-	echo -e "\n${BOLD}>>> $* <<<${RESET}"
-}
-
+log_info() { printf "${CYAN}[build]${RESET} %s\n" "$*"; }
+log_ok() { printf "${GREEN}[build]${RESET} %s\n" "$*"; }
+log_warn() { printf "${YELLOW}[build]${RESET} %s\n" "$*"; }
+log_error() { printf "${RED}[build]${RESET} %s\n" "$*" >&2; }
+log_section() { printf "\n${BOLD}>>> %s <<<${RESET}\n" "$*"; }
 die() {
 	log_error "$*"
 	exit 1
 }
 
-# ── Configuration ─────────────────────────────────────────────────────────────
-
-BUILD_DIR="build"
-LIBRARY_NAME="libten.a"
-
-CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-CORES="${BUILD_JOBS:-$CORES}"
-
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_ROOT="${ROOT_DIR}/build"
 CUDA_ARCH="${CUDA_ARCH:-75}"
+BUILD_JOBS="${BUILD_JOBS:-$(nproc 2>/dev/null || echo 4)}"
+ENABLE_SANITIZERS="${ENABLE_SANITIZERS:-OFF}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-$HOME/.local}"
 
-# ── Sanity checks ──────────────────────────────────────────────────────────────
-
-require_project_root() {
-	[[ -f CMakeLists.txt ]] ||
-		die "CMakeLists.txt not found. Run this script from the libten project root."
+require_project_files() {
+	[[ -f "${ROOT_DIR}/CMakeLists.txt" ]] ||
+		die "CMakeLists.txt not found in ${ROOT_DIR}"
 }
 
-require_cmake() {
-	command -v cmake &>/dev/null ||
-		die "cmake not found. Install CMake."
-
-	command -v ninja &>/dev/null ||
-		die "ninja not found. Install Ninja."
+require_tools() {
+	command -v cmake >/dev/null 2>&1 || die "cmake is not installed."
+	command -v ninja >/dev/null 2>&1 || die "ninja is not installed."
 }
 
-require_dependencies() {
-	require_cmake
-
-	if command -v nvcc &>/dev/null; then
-		log_info "CUDA compiler: $(command -v nvcc)"
-		nvcc --version | tail -n 1
-		log_info "CUDA will be detected by CMake."
-	else
-		log_warn "nvcc not found. CPU-only build will be used."
-	fi
+normalize_backend() {
+	case "${1,,}" in
+	cpu) printf 'cpu' ;;
+	cuda) printf 'cuda' ;;
+	*) die "Invalid backend '${1}'. Choose 'cpu' or 'cuda'." ;;
+	esac
 }
 
-# ── Build directory selection ─────────────────────────────────────────────────
+normalize_build_type() {
+	case "${1,,}" in
+	debug) printf 'Debug' ;;
+	release) printf 'Release' ;;
+	relwithdebinfo | reldbg) printf 'RelWithDebInfo' ;;
+	*) die "Invalid build type '${1}'. Choose debug, release, or relwithdebinfo." ;;
+	esac
+}
+
+require_cuda() {
+	command -v nvcc >/dev/null 2>&1 ||
+		die "CUDA was explicitly requested, but nvcc was not found. Install the CUDA Toolkit or use the CPU backend."
+
+	log_info "CUDA compiler: $(command -v nvcc)"
+	nvcc --version | tail -n 1
+}
 
 get_build_dir() {
-	local build_type="${1,,}"
-	echo "${BUILD_DIR}/${build_type}"
+	local backend="$1"
+	local build_type="$2"
+	printf '%s/%s/%s' "$BUILD_ROOT" "$backend" "${build_type,,}"
 }
 
-# ── Build ─────────────────────────────────────────────────────────────────────
-
 do_build() {
-	local build_type="$1"
-	local build_subdir
-	build_subdir=$(get_build_dir "$build_type")
+	local backend="$1"
+	local build_type="$2"
+	local build_dir
+	local cuda_enabled="OFF"
 
-	log_section "Configuring libten: ${build_type}"
+	build_dir="$(get_build_dir "$backend" "$build_type")"
 
-	log_info "C standard: C11"
-	log_info "CUDA detection: automatic"
-	log_info "Requested CUDA architecture: ${CUDA_ARCH}"
-	log_info "Build directory: ${build_subdir}"
+	if [[ "$backend" == "cuda" ]]; then
+		cuda_enabled="ON"
+		require_cuda
+	fi
+
+	log_section "Configuring libten: ${backend} / ${build_type}"
+	log_info "CUDA enabled: ${cuda_enabled}"
+	log_info "Build directory: ${build_dir}"
+	log_info "Parallel jobs: ${BUILD_JOBS}"
 
 	local cuda_args=()
-
-	if command -v nvcc &>/dev/null; then
-		cuda_args+=("-DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH}")
+	if [[ "$backend" == "cuda" ]]; then
+		cuda_args+=("-DTEN_CUDA_ARCHITECTURES=${CUDA_ARCH}")
 	fi
 
 	cmake \
-		-S . \
-		-B "$build_subdir" \
+		-S "$ROOT_DIR" \
+		-B "$build_dir" \
 		-G Ninja \
 		-DCMAKE_BUILD_TYPE="$build_type" \
+		-DTEN_ENABLE_CUDA="$cuda_enabled" \
+		-DENABLE_SANITIZERS="$ENABLE_SANITIZERS" \
+		-DBUILD_TESTING=ON \
 		-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 		-DCMAKE_COLOR_DIAGNOSTICS=ON \
-		-DBUILD_TESTING=ON \
-		-DENABLE_SANITIZERS="${ENABLE_SANITIZERS:-OFF}" \
 		"${cuda_args[@]}"
 
-	# Keep compile_commands.json in project root for clangd.
-	if [[ -f "${build_subdir}/compile_commands.json" ]]; then
-		ln -sf "${build_subdir}/compile_commands.json" compile_commands.json
+	# Point clangd at the compile database for the most recently configured build.
+	if [[ -f "${build_dir}/compile_commands.json" ]]; then
+		ln -sfn "${build_dir}/compile_commands.json" "${ROOT_DIR}/compile_commands.json"
 	fi
 
-	log_section "Building libten (${CORES} jobs)"
+	log_section "Building libten"
+	cmake --build "$build_dir" --parallel "$BUILD_JOBS"
 
-	local start_time end_time elapsed
-	start_time=$(date +%s)
-
-	cmake --build "$build_subdir" --parallel "$CORES"
-
-	end_time=$(date +%s)
-	elapsed=$((end_time - start_time))
-
-	log_ok "Build complete in ${elapsed}s -> ${build_subdir}/"
-
-	# Static library location may vary by platform/configuration.
-	local library="${build_subdir}/${LIBRARY_NAME}"
-
-	if [[ -f "$library" ]]; then
-		local size
-		size=$(du -sh "$library" | cut -f1)
-		log_info "Library: ${library} (${size})"
-	else
-		log_info "Build completed; inspect ${build_subdir}/ for generated library artifacts."
-	fi
+	log_ok "Build complete: ${build_dir}"
 }
-
-# ── Clean ─────────────────────────────────────────────────────────────────────
-
-do_clean() {
-	log_section "Cleaning build directories"
-
-	if [[ -d "$BUILD_DIR" ]]; then
-		rm -rf -- "$BUILD_DIR"
-		log_ok "Removed ${BUILD_DIR}/"
-	else
-		log_info "Nothing to clean."
-	fi
-
-	if [[ -L compile_commands.json ]]; then
-		rm -f -- compile_commands.json
-		log_info "Removed compile_commands.json"
-	fi
-}
-
-# ── Tests ──────────────────────────────────────────────────────────────────────
 
 do_test() {
-	local build_type="${1:-Debug}"
-	local build_subdir
-	build_subdir=$(get_build_dir "$build_type")
+	local backend="$1"
+	local build_type="$2"
+	local build_dir
 
-	do_build "$build_type"
+	do_build "$backend" "$build_type"
+	build_dir="$(get_build_dir "$backend" "$build_type")"
 
-	log_section "Running libten tests"
-
-	ctest \
-		--test-dir "$build_subdir" \
-		--output-on-failure
-
-	log_ok "Tests passed."
+	log_section "Running ${backend} tests"
+	ctest --test-dir "$build_dir" --output-on-failure
+	log_ok "Tests completed."
 }
 
-# ── Install ────────────────────────────────────────────────────────────────────
-
 do_install() {
-	local build_type="${1:-Release}"
-	local build_subdir
-	build_subdir=$(get_build_dir "$build_type")
+	local backend="$1"
+	local build_type="$2"
+	local build_dir
 
-	do_build "$build_type"
+	do_build "$backend" "$build_type"
+	build_dir="$(get_build_dir "$backend" "$build_type")"
 
 	log_section "Installing libten"
-
-	cmake --install "$build_subdir" --prefix "$INSTALL_PREFIX"
-
+	cmake --install "$build_dir" --prefix "$INSTALL_PREFIX"
 	log_ok "Installed to ${INSTALL_PREFIX}"
 }
 
-# ── Entry point ────────────────────────────────────────────────────────────────
+do_clean() {
+	log_section "Cleaning build artifacts"
+	if [[ -d "$BUILD_ROOT" ]]; then
+		rm -rf -- "$BUILD_ROOT"
+		log_ok "Removed ${BUILD_ROOT}"
+	else
+		log_info "No build directory to clean."
+	fi
+
+	if [[ -L "${ROOT_DIR}/compile_commands.json" ]]; then
+		rm -f -- "${ROOT_DIR}/compile_commands.json"
+		log_info "Removed compile_commands.json symlink."
+	fi
+}
+
+usage() {
+	cat <<'EOF'
+Usage:
+  ./build.sh
+  ./build.sh cpu [build-type]
+  ./build.sh cuda [build-type]
+  ./build.sh test [cpu|cuda] [build-type]
+  ./build.sh install [cpu|cuda] [build-type]
+  ./build.sh clean
+  ./build.sh help
+
+Build types:
+  debug
+  release
+  relwithdebinfo
+
+Examples:
+  ./build.sh                         # CPU Debug
+  ./build.sh cpu release             # CPU Release
+  ./build.sh cuda debug              # CPU + CUDA Debug
+  ./build.sh test cpu debug          # Build and test CPU Debug
+  ./build.sh test cuda release       # Build and test CUDA Release
+  ./build.sh install cpu release     # Install CPU Release
+  CUDA_ARCH=75 ./build.sh cuda       # Target compute capability 7.5
+
+Environment:
+  CUDA_ARCH=75
+  BUILD_JOBS=8
+  ENABLE_SANITIZERS=ON
+  INSTALL_PREFIX="$HOME/.local"
+
+CUDA is explicitly selected with the "cuda" backend argument.
+The "cpu" backend always configures TEN_ENABLE_CUDA=OFF.
+EOF
+}
 
 main() {
-	require_project_root
+	require_project_files
 
-	local cmd="${1:-debug}"
+	local command="${1:-cpu}"
+	local backend="cpu"
 	local build_type="Debug"
 
-	case "${cmd,,}" in
-	debug)
-		require_dependencies
-		do_build "Debug"
+	case "${command,,}" in
+	cpu | cuda)
+		backend="$(normalize_backend "$command")"
+		build_type="$(normalize_build_type "${2:-debug}")"
+		require_tools
+		do_build "$backend" "$build_type"
 		;;
+	test | install)
+		require_tools
 
-	release)
-		require_dependencies
-		do_build "Release"
-		;;
-
-	relwithdebinfo | reldbg)
-		require_dependencies
-		do_build "RelWithDebInfo"
-		;;
-
-	test)
-		require_dependencies
-
-		if [[ "${2:-}" =~ ^(debug|release|relwithdebinfo)$ ]]; then
-			case "${2,,}" in
-			debug) build_type="Debug" ;;
-			release) build_type="Release" ;;
-			relwithdebinfo) build_type="RelWithDebInfo" ;;
-			esac
-		fi
-
-		do_test "$build_type"
-		;;
-
-	install)
-		require_dependencies
-
-		if [[ "${2:-}" =~ ^(debug|release|relwithdebinfo)$ ]]; then
-			case "${2,,}" in
-			debug) build_type="Debug" ;;
-			release) build_type="Release" ;;
-			relwithdebinfo) build_type="RelWithDebInfo" ;;
-			esac
+		# Keep the command forms unambiguous:
+		#   test [backend] [build-type]
+		#   install [backend] [build-type]
+		backend="$(normalize_backend "${2:-cpu}")"
+		if [[ "$command" == "test" ]]; then
+			build_type="$(normalize_build_type "${3:-debug}")"
+			do_test "$backend" "$build_type"
 		else
-			build_type="Release"
+			build_type="$(normalize_build_type "${3:-release}")"
+			do_install "$backend" "$build_type"
 		fi
-
-		do_install "$build_type"
 		;;
-
 	clean)
 		do_clean
 		;;
-
 	help | --help | -h)
-		cat <<EOF
-Usage: $0 [command] [options]
-
-Commands:
-  debug                  Debug build (default)
-  release                Release build
-  relwithdebinfo         RelWithDebInfo build
-  test [build-type]      Build and run tests
-  install [build-type]   Build and install libten
-  clean                  Remove build directories
-  help                   Show this help
-
-Environment variables:
-  CUDA_ARCH=75           CU====================ippppppDA architecture (default: 75)
-  BUILD_JOBS=8           Parallel build jobs
-  INSTALL_PREFIX=PATH    Installation prefix (default: ~/.local)
-
-CUDA is detected automatically. If unavailable, the CPU backend is built.
-
-Examples:
-  $0
-  $0 debug
-  $0 release
-  $0 test
-  $0 test release
-  CUDA_ARCH=75 $0 release
-  INSTALL_PREFIX="\$HOME/.local" $0 install
-EOF
+		usage
 		;;
-
 	*)
-		die "Unknown command: ${cmd}. Run '$0 help' for usage."
+		die "Unknown command '${command}'. Run './build.sh help' for usage."
 		;;
 	esac
 }
