@@ -126,9 +126,6 @@ Ten_Status T_create_tensor_view(TensorView *tv, const Tensor *t) {
   if (dtype_size == 0)
     return (Ten_Status){TT_ERR_DTYPE_UNSUPPORTED, "unsupported source dtype"};
 
-  if (t->storage->device.devtype != CPU)
-    return (Ten_Status){TT_ERR_UNSUPPORTED, "device backend unavailable"};
-
   if (!T_validate_tensor_bounds(t))
     return (Ten_Status){TT_ERR_INVALID_ARG, "tensor exceeds storage bounds"};
 
@@ -179,9 +176,6 @@ Ten_Status T_tensor_transpose(Tensor *dst, const Tensor *src, i32 dim0,
   if (!T_is_dtype_valid(src->storage->dtype))
     return status_error(TT_ERR_INVALID_ARG, "invalid datatype");
 
-  if (src->storage->device.devtype != CPU)
-    return status_error(TT_ERR_INVALID_ARG, "unsupported device args");
-
   if (src->storage->data == NULL)
     return status_error(TT_ERR_INVALID_ARG, "input data is NULL");
 
@@ -221,9 +215,6 @@ Ten_Status T_tensor_permute(Tensor *dst, const Tensor *src, const i64 *dims,
 
   if (!T_is_dtype_valid(src->storage->dtype))
     return status_error(TT_ERR_INVALID_ARG, "invalid datatype");
-
-  if (src->storage->device.devtype != CPU)
-    return status_error(TT_ERR_INVALID_ARG, "unsupported device args");
 
   if (src->storage->n_bytes > 0 && src->storage->data == NULL) {
     return status_error(TT_ERR_INVALID_ARG, "input data is NULL");
@@ -536,77 +527,6 @@ Ten_Status T_tensor_reshape_view(Tensor *dst, const Tensor *src,
   /* Retain source storage and commit the view. */
   return view_commit(dst, &tmp, src);
 }
-// Ten_Status T_tensor_contiguous_logical_copy(Tensor *dst, const Tensor *src)
-// {
-//   if (dst == NULL || src == NULL)
-//     return status_error(TT_ERR_INVALID_ARG, "source or destination is
-//     NULL");
-//
-//   if (dst->storage == NULL || src->storage == NULL)
-//     return status_error(TT_ERR_INVALID_STATE,
-//                         "source or destination has no storage");
-//
-//   if (!T_is_dtype_valid(src->storage->dtype))
-//     return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported source
-//     dtype");
-//
-//   if (dst->storage->dtype != src->storage->dtype)
-//     return status_error(TT_ERR_DTYPE_MISMATCH, "storage dtype mismatch");
-//
-//   if (dst->storage->device.devtype != CPU ||
-//       src->storage->device.devtype != CPU)
-//     return status_error(TT_ERR_UNSUPPORTED, "CPU copy backend only");
-//
-//   if (!T_is_ranks_valid(src->rank) ||
-//       !T_is_shape_input_valid(src->shape, src->rank))
-//     return status_error(TT_ERR_INVALID_ARG, "invalid source shape");
-//
-//   if (src->rank != dst->rank || src->num_el != dst->num_el)
-//     return status_error(TT_ERR_INVALID_ARG, "tensor shape mismatch");
-//
-//   if (src->rank > 0 && src->strides == NULL)
-//     return status_error(TT_ERR_INVALID_STATE, "source strides are NULL");
-//
-//   if (src->num_el < 0 || src->offset < 0)
-//     return status_error(TT_ERR_INVALID_ARG, "invalid source metadata");
-//
-//   if (!T_validate_tensor_bounds(src) || !T_validate_tensor_bounds(dst))
-//     return status_error(TT_ERR_INVALID_ARG, "tensor exceeds storage
-//     bounds");
-//
-//   size_t dtype_size = T_get_dtype_size(src->storage->dtype);
-//
-//   if (dtype_size == 0)
-//     return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported dtype");
-//
-//   if (src->num_el == 0)
-//     return status_ok();
-//
-//   i64 indices[TT_MAX_RANK] = {0};
-//
-//   for (i64 n = 0; n < src->num_el; ++n) {
-//     i64 src_offset = src->offset;
-//
-//     for (i32 d = 0; d < src->rank; ++d)
-//       src_offset += indices[d] * src->strides[d];
-//
-//     memcpy((char *)dst->storage->data + (size_t)n * dtype_size,
-//            (char *)src->storage->data + (size_t)src_offset * dtype_size,
-//            dtype_size);
-//
-//     /* Increment multidimensional indices. */
-//     for (i32 d = src->rank - 1; d >= 0; --d) {
-//       indices[d]++;
-//
-//       if (indices[d] < src->shape[d])
-//         break;
-//
-//       indices[d] = 0;
-//     }
-//   }
-//
-//   return status_ok();
-// }
 Ten_Status T_tensor_contiguous_materialize(Tensor *dst, const Tensor *src) {
   if (dst == NULL || src == NULL)
     return status_error(TT_ERR_INVALID_ARG, "source or destination is NULL");
@@ -618,8 +538,6 @@ Ten_Status T_tensor_contiguous_materialize(Tensor *dst, const Tensor *src) {
 
   if (src->storage == NULL)
     return status_error(TT_ERR_INVALID_STATE, "source has no storage");
-  if (src->storage->device.devtype != CPU)
-    return status_error(TT_ERR_UNSUPPORTED, "CPU copy backend only");
 
   if (!T_is_ranks_valid(src->rank) ||
       !T_is_shape_input_valid(src->shape, src->rank))

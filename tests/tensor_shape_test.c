@@ -8,10 +8,10 @@
 
 #include "../include/ten/ten_types.h"
 
-size_t T_get_dtype_size(DataType dtype);
+size_t T_get_dtype_size_in_byte(DataType dtype);
 #include "../src/core/ten_tensor.c"
 
-size_t T_get_dtype_size(DataType dtype) {
+size_t T_get_dtype_size_in_bytes(DataType dtype) {
   switch (dtype) {
   case I8:
   case U8:

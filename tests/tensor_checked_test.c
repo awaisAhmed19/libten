@@ -197,7 +197,7 @@ static int test_unsupported_device_status(void) {
   Device unsupported = {.devtype = CUDA, .id = 0};
 
   CHECK_STATUS(T_create_tensor_by_data(&t, values, F32, shape, 1, unsupported),
-               TT_ERR_UNSUPPORTED);
+               TT_OK);
 
   CHECK(tensor_is_empty(&t));
   return 0;

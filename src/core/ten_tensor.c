@@ -201,19 +201,14 @@ static bool storage_allocate(void **out, Device device, size_t n_bytes) {
   if (n_bytes == 0)
     return true;
 
-  switch (device.devtype) {
-  case CPU:
-    *out = malloc(n_bytes);
-    return *out != NULL;
+  const Ten_Backend *backend = T_get_backend(device);
 
-#ifdef USE_CUDA
-  case CUDA:
-    return cudaMalloc(out, n_bytes) == cudaSuccess;
-#endif
-
-  default:
+  if (backend == NULL || backend->memory.allocate == NULL)
     return false;
-  }
+
+  Ten_Status status = backend->memory.allocate(out, n_bytes);
+
+  return status.stype == TT_OK;
 }
 
 static bool storage_copy_from_host(void *dst, Device device, const void *src,
@@ -224,40 +219,48 @@ static bool storage_copy_from_host(void *dst, Device device, const void *src,
   if (dst == NULL || src == NULL)
     return false;
 
+  const Ten_Backend *backend = T_get_backend(device);
+
+  if (backend == NULL || backend->memory.copy == NULL)
+    return false;
+
+  Ten_CopyKind kind;
+
   switch (device.devtype) {
   case CPU:
-    memcpy(dst, src, n_bytes);
-    return true;
+    kind = TEN_COPY_HOST_TO_HOST;
+    break;
 
-#ifdef USE_CUDA
   case CUDA:
-    return cudaMemcpy(dst, src, n_bytes, cudaMemcpyHostToDevice) == cudaSuccess;
-#endif
+    kind = TEN_COPY_HOST_TO_DEVICE;
+    break;
 
   default:
     return false;
   }
+
+  Ten_Status status = backend->memory.copy(dst, src, n_bytes, kind);
+
+  return status.stype == TT_OK;
 }
 
-static void storage_deallocate(void *data, Device device) {
+static Ten_Status storage_deallocate(void *data, Device device) {
   if (data == NULL)
-    return;
+    return status_ok();
 
-  switch (device.devtype) {
-  case CPU:
-    free(data);
-    break;
+  const Ten_Backend *backend = T_get_backend(device);
 
-#ifdef USE_CUDA
-  case CUDA:
-    (void)cudaFree(data);
-    break;
-#endif
+  if (backend == NULL || backend->memory.deallocate == NULL)
+    return status_error(TT_ERR_UNSUPPORTED, "Storage backend is unavailable");
 
-  default:
-    fprintf(stderr, "ERR: unsupported storage device\n");
-    break;
-  }
+  /*
+   * The backend deallocate function accepts void **.
+   * local pointer is used because the storage structure
+   * owns the original data pointer.
+   */
+  void *ptr = data;
+
+  return backend->memory.deallocate(&ptr);
 }
 bool T_storage_retain(TensorStorage *storage) {
   if (storage == NULL || storage->ref_count == 0)
@@ -276,7 +279,7 @@ void T_storage_release(TensorStorage **storage) {
 
   TensorStorage *st = *storage;
 
-  /* Relinquish this caller's reference. */
+  /* release this caller's reference. */
   *storage = NULL;
 
   if (st->ref_count == 0) {
@@ -287,7 +290,8 @@ void T_storage_release(TensorStorage **storage) {
   --st->ref_count;
 
   if (st->ref_count == 0) {
-    storage_deallocate(st->data, st->device);
+    Ten_Status status = storage_deallocate(st->data, st->device);
+    T_PRINT_STATUS(status);
     free(st);
   }
 }
@@ -306,9 +310,6 @@ Ten_Status T_validate_new_tensor(const Tensor *t, DataType dtype,
 
   if (T_get_dtype_size(dtype) == 0)
     return (Ten_Status){TT_ERR_DTYPE_UNSUPPORTED, "unsupported dtype"};
-
-  if (dev.devtype != CPU)
-    return (Ten_Status){TT_ERR_UNSUPPORTED, "device backend unavailable"};
 
   return (Ten_Status){TT_OK, "success"};
 }
@@ -486,9 +487,6 @@ Ten_Status T_create_tensor_storage(TensorStorage **ts, const void *input_data,
   if (n_bytes > 0 && input_data == NULL)
     return status_error(TT_ERR_INVALID_ARG, "input data is NULL");
 
-  if (dev.devtype != CPU)
-    return status_error(TT_ERR_UNSUPPORTED, "device backend unavailable");
-
   Ten_Status status = T_create_empty_storage(ts, dtype, dev, n_bytes);
   if (status.stype != TT_OK)
     return status;
@@ -552,9 +550,6 @@ Ten_Status T_copy_tensor_data(TensorStorage *dst, const Tensor *src) {
 
   if (dst->dtype != src->storage->dtype)
     return status_error(TT_ERR_DTYPE_MISMATCH, "storage dtype mismatch");
-
-  if (dst->device.devtype != CPU || src->storage->device.devtype != CPU)
-    return status_error(TT_ERR_UNSUPPORTED, "CPU copy backend only");
 
   if (!T_is_ranks_valid(src->rank) ||
       !T_is_shape_input_valid(src->shape, src->rank))
