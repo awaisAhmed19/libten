@@ -1,6 +1,6 @@
 #include "ten/ten_tensor.h"
-#include "internal/ten_tensor.h"
 #include "internal/ten_backend.h"
+#include "internal/ten_tensor.h"
 #include "ten/ten_status.h"
 #include "ten/ten_types.h"
 #include <stdio.h>
@@ -563,9 +563,6 @@ Ten_Status T_copy_tensor_data(TensorStorage *dst, const Tensor *src) {
   if (src->rank > 0 && src->strides == NULL)
     return status_error(TT_ERR_INVALID_STATE, "source strides are NULL");
 
-  if (src->num_el < 0 || src->offset < 0)
-    return status_error(TT_ERR_INVALID_ARG, "invalid source metadata");
-
   size_t dtype_size = T_get_dtype_size(src->storage->dtype);
 
   if (dtype_size == 0)
@@ -600,49 +597,39 @@ Ten_Status T_copy_tensor_data(TensorStorage *dst, const Tensor *src) {
 
   size_t storage_elements = src->storage->n_bytes / dtype_size;
 
-  /*
-   * Validate the maximum source element index.
-   * Negative strides are not supported here.
-   */
+  i64 min_index = src->offset;
   i64 max_index = src->offset;
 
   for (i32 i = 0; i < src->rank; ++i) {
-    if (src->strides[i] < 0)
-      return status_error(TT_ERR_UNSUPPORTED,
-                          "negative strides are unsupported");
-
     if (src->shape[i] <= 0)
       return status_error(TT_ERR_INVALID_STATE,
                           "invalid non-empty tensor shape");
 
     i64 extent = src->shape[i] - 1;
+    i64 delta;
 
-    if (src->strides[i] != 0 &&
-        extent > (I64_MAX - max_index) / src->strides[i])
+    if (T_check_i64_mul(extent, src->strides[i], &delta) != RNG_OK)
       return status_error(TT_ERR_OVERFLOW, "source offset overflow");
 
-    max_index += extent * src->strides[i];
+    if (delta < 0) {
+      if (T_check_i64_add(min_index, delta, &min_index) != RNG_OK)
+        return status_error(TT_ERR_OVERFLOW, "minimum offset overflow");
+    } else {
+      if (T_check_i64_add(max_index, delta, &max_index) != RNG_OK)
+        return status_error(TT_ERR_OVERFLOW, "maximum offset overflow");
+    }
   }
 
-  if ((uint64_t)max_index >= storage_elements)
+  if (min_index < 0 || (uint64_t)max_index >= storage_elements)
     return status_error(TT_ERR_OUT_OF_RANGE,
                         "source tensor exceeds storage bounds");
-
-  /*
-   * Copy elements in logical row-major order.
-   */
   const unsigned char *src_data = (const unsigned char *)src->storage->data;
 
   unsigned char *dst_data = (unsigned char *)dst->data;
-
   for (i64 linear = 0; linear < src->num_el; ++linear) {
-
     i64 remaining = linear;
     i64 src_index = src->offset;
 
-    /*
-     * Decode the logical linear index into coordinates.
-     */
     for (i32 d = src->rank - 1; d >= 0; --d) {
       i64 coord = remaining % src->shape[d];
       remaining /= src->shape[d];
@@ -954,9 +941,9 @@ Ten_Status T_tensor_zeros(Tensor *t, const DataType dtype, const i64 *shape,
   return tensor_create_initialized(t, dtype, shape, rank, dev, ZEROS, NULL);
 }
 
-Ten_Status T_tensor_fill_value(Tensor *t, const DataType dtype, const i64 *shape,
-                          const i32 rank, const Device dev,
-                          const void *scalar) {
+Ten_Status T_tensor_fill_value(Tensor *t, const DataType dtype,
+                               const i64 *shape, const i32 rank,
+                               const Device dev, const void *scalar) {
   return tensor_create_initialized(t, dtype, shape, rank, dev, FROM_SCALAR,
                                    scalar);
 }

@@ -1,7 +1,8 @@
-#include "internal/ten_tensor.h"
-#include "ten/ten_tensor.h"
 #include "ten/ten_view.h"
 #include "internal/ten_backend.h"
+#include "internal/ten_tensor.h"
+#include "ten/ten_tensor.h"
+#include <stdint.h>
 #include <string.h>
 
 bool T_is_permutation(const i64 *dims, i32 rank) {
@@ -78,28 +79,30 @@ bool T_validate_tensor_bounds(const Tensor *t) {
   if (t->storage->data == NULL)
     return false;
 
-  size_t max_offset = (size_t)t->offset;
+  i64 min_offset = t->offset;
+  i64 max_offset = t->offset;
 
   for (i32 i = 0; i < t->rank; ++i) {
-    if (t->shape[i] <= 0 || t->strides[i] < 0)
+    if (t->shape[i] <= 0)
       return false;
 
-    size_t dim_offset;
-    size_t next_offset;
+    i64 extent = t->shape[i] - 1;
+    i64 delta;
 
-    if (T_checked_mul_size((size_t)(t->shape[i] - 1), (size_t)t->strides[i],
-                           &dim_offset) != RNG_OK)
+    if (T_check_i64_mul(extent, t->strides[i], &delta) != RNG_OK)
       return false;
 
-    if (T_checked_add_size(max_offset, dim_offset, &next_offset) != RNG_OK)
-      return false;
-
-    max_offset = next_offset;
+    if (delta < 0) {
+      if (T_check_i64_add(min_offset, delta, &min_offset) != RNG_OK)
+        return false;
+    } else {
+      if (T_check_i64_add(max_offset, delta, &max_offset) != RNG_OK)
+        return false;
+    }
   }
 
-  return max_offset < capacity;
+  return min_offset >= 0 && (uint64_t)max_offset < capacity;
 }
-
 Ten_Status T_create_tensor_view(TensorView *tv, const Tensor *t) {
 
   if (tv == NULL || t == NULL)
@@ -533,9 +536,11 @@ Ten_Status T_tensor_reshape_view(Tensor *dst, const Tensor *src,
   /* Retain source storage and commit the view. */
   return view_commit(dst, &tmp, src);
 }
-// Ten_Status T_tensor_contiguous_logical_copy(Tensor *dst, const Tensor *src) {
+// Ten_Status T_tensor_contiguous_logical_copy(Tensor *dst, const Tensor *src)
+// {
 //   if (dst == NULL || src == NULL)
-//     return status_error(TT_ERR_INVALID_ARG, "source or destination is NULL");
+//     return status_error(TT_ERR_INVALID_ARG, "source or destination is
+//     NULL");
 //
 //   if (dst->storage == NULL || src->storage == NULL)
 //     return status_error(TT_ERR_INVALID_STATE,
@@ -566,7 +571,8 @@ Ten_Status T_tensor_reshape_view(Tensor *dst, const Tensor *src,
 //     return status_error(TT_ERR_INVALID_ARG, "invalid source metadata");
 //
 //   if (!T_validate_tensor_bounds(src) || !T_validate_tensor_bounds(dst))
-//     return status_error(TT_ERR_INVALID_ARG, "tensor exceeds storage bounds");
+//     return status_error(TT_ERR_INVALID_ARG, "tensor exceeds storage
+//     bounds");
 //
 //   size_t dtype_size = T_get_dtype_size(src->storage->dtype);
 //
@@ -693,4 +699,93 @@ Ten_Status T_tensor_contiguous_materialize(Tensor *dst, const Tensor *src) {
 
   *dst = tmp;
   return status_ok();
+}
+Ten_Status T_tensor_slice(Tensor *dst, const Tensor *src, i32 dim, i64 start,
+                          i64 end, i64 step) {
+  // 1. Validate source.
+  if (src == NULL || src->storage == NULL || src->shape == NULL ||
+      src->strides == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "invalid source tensor");
+
+  if (!T_is_ranks_valid(src->rank))
+    return status_error(TT_ERR_INVALID_ARG, "invalid source rank");
+
+  if (src->storage->n_bytes > 0 && src->storage->data == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "source data is NULL");
+
+  Ten_Status status = T_validate_new_tensor(
+      dst, src->storage->dtype, src->shape, src->rank, src->storage->device);
+  if (status.stype != TT_OK)
+    return status;
+
+  if (!T_is_dtype_valid(src->storage->dtype)) {
+    return status_error(TT_ERR_DTYPE_UNSUPPORTED, "Invalid src Data type");
+  }
+
+  if (dim < 0 || dim >= src->rank)
+    return status_error(TT_ERR_INVALID_ARG, "invalid slice dimension");
+
+  if (step == 0)
+    return status_error(TT_ERR_INVALID_ARG, "slice step cannot be zero");
+
+  // Avoid overflow when calculating abs(step).
+  if (step == (-I64_MAX - 1))
+    return status_error(TT_ERR_INVALID_ARG, "slice step overflow");
+
+  i64 dim_size = src->shape[dim];
+  i64 length = 0;
+  if (step > 0) {
+
+    if (start < 0 || start > dim_size || end < 0 || end > dim_size ||
+        start > end)
+      return status_error(TT_ERR_INVALID_ARG, "invalid slice bounds");
+
+    if (start < end)
+      length = 1 + (end - 1 - start) / step;
+
+  } else {
+
+    if (start < -1 || start >= dim_size || end < -1 || end >= dim_size ||
+        start <= end)
+      return status_error(TT_ERR_INVALID_ARG, "invalid reverse slice bounds");
+
+    if (start > end)
+      length = 1 + (start - 1 - end) / (-step);
+  }
+  Tensor tmp = {0};
+  tmp.rank = src->rank;
+  tmp.offset = src->offset;
+
+  status = view_alloc(&tmp, src->shape);
+  if (status.stype != TT_OK)
+    return status;
+  memcpy(tmp.strides, src->strides, sizeof(i64) * src->rank);
+
+  tmp.shape[dim] = length;
+
+  if (T_check_i64_mul(src->strides[dim], step, &tmp.strides[dim]) != RNG_OK) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_INVALID_ARG, "slice stride overflow");
+  }
+
+  if (length > 0) {
+    i64 offset_delta;
+
+    if (T_check_i64_mul(start, src->strides[dim], &offset_delta) != RNG_OK ||
+        T_check_i64_add(src->offset, offset_delta, &tmp.offset) != RNG_OK) {
+      T_destroy_tensor(&tmp);
+      return status_error(TT_ERR_INVALID_ARG, "slice offset overflow");
+    }
+  }
+
+  tmp.num_el = 1;
+
+  for (i32 i = 0; i < tmp.rank; ++i) {
+    if (T_check_i64_mul(tmp.num_el, tmp.shape[i], &tmp.num_el) != RNG_OK) {
+      T_destroy_tensor(&tmp);
+      return status_error(TT_ERR_INVALID_ARG, "element count overflow");
+    }
+  }
+
+  return view_commit(dst, &tmp, src);
 }

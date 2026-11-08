@@ -1,13 +1,12 @@
 #ifndef TEN_VIEW_H
 #define TEN_VIEW_H
 
+#include "internal/ten_tensor.h"
 #include "ten_status.h"
 #include "ten_types.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 
 /*
  * 8. View / alias operations
@@ -16,7 +15,8 @@ extern "C" {
 /*
  * View operations create new tensor metadata while sharing
  * the source tensor's underlying storage.
- *
+ *a TensorView is a description of how to interpret an existing block of tensor
+ * memory without owning or necessarily copying that memory.
  * - Each view owns its own shape and stride metadata.
  * - Each view retains a reference to shared storage.
  * - Data modifications through one view are visible through

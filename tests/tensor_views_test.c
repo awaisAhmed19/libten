@@ -675,6 +675,373 @@ static int test_materialize_scalar_and_empty(void) {
 
   return 0;
 }
+static int create_slice_test_tensor(Tensor *src) {
+  const float data[] = {
+      1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13,
+      14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+  };
+
+  const i64 shape[] = {5, 5};
+
+  CHECK_STATUS(T_create_tensor_by_data(src, data, F32, shape, 2, CPU_DEVICE),
+               TT_OK);
+
+  return 0;
+}
+static int check_slice_values(const Tensor *t, const float *expected,
+                              i64 count) {
+  CHECK(t->num_el == count);
+
+  const float *data = (const float *)t->storage->data;
+
+  i64 linear = 0;
+
+  for (i64 i = 0; i < t->shape[0]; ++i) {
+    for (i64 j = 0; j < (t->rank > 1 ? t->shape[1] : 1); ++j) {
+      i64 offset =
+          t->offset + i * t->strides[0] + (t->rank > 1 ? j * t->strides[1] : 0);
+
+      CHECK(data[offset] == expected[linear++]);
+    }
+  }
+
+  return 0;
+}
+static int test_slice_full(void) {
+  Tensor src = {0};
+  Tensor dst = {0};
+
+  CHECK(create_slice_test_tensor(&src) == 0);
+
+  CHECK_STATUS(T_tensor_slice(&dst, &src, 1, 0, 5, 1), TT_OK);
+
+  CHECK(dst.rank == 2);
+  CHECK(dst.num_el == 25);
+
+  CHECK(dst.shape[0] == 5);
+  CHECK(dst.shape[1] == 5);
+
+  CHECK(dst.strides[0] == 5);
+  CHECK(dst.strides[1] == 1);
+
+  CHECK(dst.offset == 0);
+  CHECK(dst.storage == src.storage);
+
+  T_destroy_tensor(&src);
+  T_destroy_tensor(&dst);
+
+  return 0;
+}
+static int test_slice_partial(void) {
+  Tensor src = {0};
+  Tensor dst = {0};
+
+  const float expected[] = {
+      2, 3, 4, 7, 8, 9, 12, 13, 14, 17, 18, 19, 22, 23, 24,
+  };
+
+  CHECK(create_slice_test_tensor(&src) == 0);
+
+  CHECK_STATUS(T_tensor_slice(&dst, &src, 1, 1, 4, 1), TT_OK);
+
+  CHECK(dst.shape[0] == 5);
+  CHECK(dst.shape[1] == 3);
+
+  CHECK(dst.strides[0] == 5);
+  CHECK(dst.strides[1] == 1);
+
+  CHECK(dst.offset == 1);
+  CHECK(check_slice_values(&dst, expected, 15) == 0);
+
+  T_destroy_tensor(&src);
+  T_destroy_tensor(&dst);
+
+  return 0;
+}
+static int test_slice_step_two(void) {
+  Tensor src = {0};
+  Tensor dst = {0};
+
+  const float expected[] = {
+      1, 3, 5, 6, 8, 10, 11, 13, 15, 16, 18, 20, 21, 23, 25,
+  };
+
+  CHECK(create_slice_test_tensor(&src) == 0);
+
+  CHECK_STATUS(T_tensor_slice(&dst, &src, 1, 0, 5, 2), TT_OK);
+
+  CHECK(dst.shape[0] == 5);
+  CHECK(dst.shape[1] == 3);
+
+  CHECK(dst.strides[0] == 5);
+  CHECK(dst.strides[1] == 2);
+
+  CHECK(dst.offset == 0);
+  CHECK(check_slice_values(&dst, expected, 15) == 0);
+
+  T_destroy_tensor(&src);
+  T_destroy_tensor(&dst);
+
+  return 0;
+}
+static int test_slice_reverse(void) {
+  Tensor src = {0};
+  Tensor dst = {0};
+
+  const float expected[] = {
+      5,  4,  3,  2,  1,  10, 9,  8,  7,  6,  15, 14, 13,
+      12, 11, 20, 19, 18, 17, 16, 25, 24, 23, 22, 21,
+  };
+
+  CHECK(create_slice_test_tensor(&src) == 0);
+
+  CHECK_STATUS(T_tensor_slice(&dst, &src, 1, 4, -1, -1), TT_OK);
+
+  CHECK(dst.shape[0] == 5);
+  CHECK(dst.shape[1] == 5);
+
+  CHECK(dst.strides[0] == 5);
+  CHECK(dst.strides[1] == -1);
+
+  CHECK(dst.offset == 4);
+  CHECK(check_slice_values(&dst, expected, 25) == 0);
+
+  T_destroy_tensor(&src);
+  T_destroy_tensor(&dst);
+
+  return 0;
+}
+static int test_slice_reverse_step_two(void) {
+  Tensor src = {0};
+  Tensor dst = {0};
+
+  const float expected[] = {
+      5, 3, 1, 10, 8, 6, 15, 13, 11, 20, 18, 16, 25, 23, 21,
+  };
+
+  CHECK(create_slice_test_tensor(&src) == 0);
+
+  CHECK_STATUS(T_tensor_slice(&dst, &src, 1, 4, -1, -2), TT_OK);
+
+  CHECK(dst.shape[0] == 5);
+  CHECK(dst.shape[1] == 3);
+
+  CHECK(dst.strides[0] == 5);
+  CHECK(dst.strides[1] == -2);
+
+  CHECK(dst.offset == 4);
+  CHECK(check_slice_values(&dst, expected, 15) == 0);
+
+  T_destroy_tensor(&src);
+  T_destroy_tensor(&dst);
+
+  return 0;
+}
+static int test_slice_empty(void) {
+  Tensor src = {0};
+  Tensor dst = {0};
+
+  CHECK(create_slice_test_tensor(&src) == 0);
+
+  CHECK_STATUS(T_tensor_slice(&dst, &src, 1, 2, 2, 1), TT_OK);
+
+  CHECK(dst.rank == 2);
+  CHECK(dst.shape[0] == 5);
+  CHECK(dst.shape[1] == 0);
+
+  CHECK(dst.num_el == 0);
+  CHECK(dst.strides[0] == 5);
+  CHECK(dst.strides[1] == 1);
+
+  CHECK(dst.storage == src.storage);
+
+  T_destroy_tensor(&src);
+  T_destroy_tensor(&dst);
+
+  return 0;
+}
+static int test_slice_invalid_arguments(void) {
+  Tensor src = {0};
+  Tensor dst = {0};
+
+  CHECK(create_slice_test_tensor(&src) == 0);
+  CHECK_STATUS(T_tensor_slice(&dst, &src, 1, 0, 5, 0), TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_slice(&dst, &src, 2, 0, 5, 1), TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_slice(&dst, &src, -1, 0, 5, 1), TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_slice(&dst, &src, 1, -1, 5, 1), TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_slice(&dst, &src, 1, 0, 6, 1), TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_slice(&dst, &src, 1, 0, 5, -1), TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_slice(&dst, &src, 1, 4, -1, 0), TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_slice(&dst, &src, 1, 4, 5, -1), TT_ERR_INVALID_ARG);
+
+  T_destroy_tensor(&src);
+
+  return 0;
+}
+static int test_slice_retains_storage(void) {
+  Tensor src = {0};
+  Tensor dst = {0};
+
+  const float expected[] = {
+      5,  4,  3,  2,  1,  10, 9,  8,  7,  6,  15, 14, 13,
+      12, 11, 20, 19, 18, 17, 16, 25, 24, 23, 22, 21,
+  };
+
+  CHECK(create_slice_test_tensor(&src) == 0);
+
+  CHECK_STATUS(T_tensor_slice(&dst, &src, 1, 4, -1, -1), TT_OK);
+
+  CHECK(dst.storage == src.storage);
+  CHECK(src.storage->ref_count == 2);
+
+  T_destroy_tensor(&src);
+
+  CHECK(check_slice_values(&dst, expected, 25) == 0);
+
+  T_destroy_tensor(&dst);
+
+  return 0;
+}
+static int test_materialize_reversed_tensor(void) {
+  Tensor src = {0};
+  Tensor view = {0};
+  Tensor dst = {0};
+
+  const float expected[] = {
+      5,  4,  3,  2,  1,  10, 9,  8,  7,  6,  15, 14, 13,
+      12, 11, 20, 19, 18, 17, 16, 25, 24, 23, 22, 21,
+  };
+
+  CHECK(create_slice_test_tensor(&src) == 0);
+
+  CHECK_STATUS(T_tensor_slice(&view, &src, 1, 4, -1, -1), TT_OK);
+
+  CHECK_STATUS(T_tensor_contiguous_materialize(&dst, &view), TT_OK);
+
+  CHECK(dst.storage != view.storage);
+  CHECK(dst.offset == 0);
+  CHECK(dst.strides[0] == 5);
+  CHECK(dst.strides[1] == 1);
+  CHECK(dst.num_el == 25);
+
+  CHECK(check_slice_values(&dst, expected, 25) == 0);
+
+  T_destroy_tensor(&src);
+  T_destroy_tensor(&view);
+  T_destroy_tensor(&dst);
+
+  return 0;
+}
+static int test_slice_non_contiguous_source(void) {
+  Tensor src = {0};
+  Tensor first = {0};
+  Tensor second = {0};
+
+  const float expected[] = {
+      3, 5, 8, 10, 13, 15, 18, 20, 23, 25,
+  };
+
+  CHECK(create_slice_test_tensor(&src) == 0);
+
+  // First slice: every second column.
+  CHECK_STATUS(T_tensor_slice(&first, &src, 1, 0, 5, 2), TT_OK);
+
+  CHECK(first.shape[0] == 5);
+  CHECK(first.shape[1] == 3);
+  CHECK(first.strides[0] == 5);
+  CHECK(first.strides[1] == 2);
+
+  // Second slice: slice the non-contiguous view.
+  CHECK_STATUS(T_tensor_slice(&second, &first, 1, 1, 3, 1), TT_OK);
+
+  CHECK(second.shape[0] == 5);
+  CHECK(second.shape[1] == 2);
+
+  CHECK(second.strides[0] == 5);
+  CHECK(second.strides[1] == 2);
+
+  CHECK(second.offset == 2);
+  CHECK(second.num_el == 10);
+
+  CHECK(second.storage == src.storage);
+
+  // Destroy both parent tensors.
+  T_destroy_tensor(&src);
+  T_destroy_tensor(&first);
+
+  // The final view must remain valid.
+  CHECK(check_slice_values(&second, expected, 10) == 0);
+
+  T_destroy_tensor(&second);
+
+  return 0;
+}
+static int test_slice_reverse_dim0(void) {
+  Tensor src = {0};
+  Tensor dst = {0};
+
+  const float expected[] = {
+      21, 22, 23, 24, 25, 16, 17, 18, 19, 20, 11, 12, 13,
+      14, 15, 6,  7,  8,  9,  10, 1,  2,  3,  4,  5,
+  };
+
+  CHECK(create_slice_test_tensor(&src) == 0);
+
+  CHECK_STATUS(T_tensor_slice(&dst, &src, 0, 4, -1, -1), TT_OK);
+
+  CHECK(dst.rank == 2);
+  CHECK(dst.shape[0] == 5);
+  CHECK(dst.shape[1] == 5);
+
+  CHECK(dst.strides[0] == -5);
+  CHECK(dst.strides[1] == 1);
+
+  CHECK(dst.offset == 20);
+  CHECK(dst.num_el == 25);
+
+  CHECK(check_slice_values(&dst, expected, 25) == 0);
+
+  T_destroy_tensor(&src);
+  T_destroy_tensor(&dst);
+
+  return 0;
+}
+static int test_slice_empty_tensor(void) {
+  Tensor src = {0};
+  Tensor dst = {0};
+
+  const i64 shape[] = {2, 0, 4};
+
+  CHECK_STATUS(T_create_tensor_by_data(&src, NULL, F32, shape, 3, CPU_DEVICE),
+               TT_OK);
+
+  CHECK(src.num_el == 0);
+
+  CHECK_STATUS(T_tensor_slice(&dst, &src, 1, 0, 0, 1), TT_OK);
+
+  CHECK(dst.rank == 3);
+
+  CHECK(dst.shape[0] == 2);
+  CHECK(dst.shape[1] == 0);
+  CHECK(dst.shape[2] == 4);
+
+  CHECK(dst.num_el == 0);
+  CHECK(dst.offset == src.offset);
+
+  CHECK(dst.storage == src.storage);
+
+  CHECK(dst.storage->n_bytes == 0);
+
+  T_destroy_tensor(&src);
+
+  // The empty view must still retain its storage.
+  CHECK(dst.storage != NULL);
+  CHECK(dst.num_el == 0);
+
+  T_destroy_tensor(&dst);
+
+  return 0;
+}
 /*
  * Main
  *  */
@@ -694,7 +1061,13 @@ int main(void) {
       test_materialize_transposed_tensor() ||
       test_materialize_nonzero_offset() ||
       test_materialize_independent_storage() ||
-      test_materialize_scalar_and_empty()) {
+      test_materialize_scalar_and_empty() ||
+      test_materialize_scalar_and_empty() || test_slice_full() ||
+      test_slice_partial() || test_slice_step_two() || test_slice_reverse() ||
+      test_slice_reverse_step_two() || test_slice_empty() ||
+      test_slice_invalid_arguments() || test_slice_retains_storage() ||
+      test_slice_non_contiguous_source() || test_slice_reverse_dim0() ||
+      test_slice_empty_tensor() || test_materialize_reversed_tensor()) {
     return EXIT_FAILURE;
   }
 
