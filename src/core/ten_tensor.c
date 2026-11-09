@@ -279,14 +279,12 @@ void T_storage_release(TensorStorage **storage) {
 
   TensorStorage *st = *storage;
 
-  /* release this caller's reference. */
-  *storage = NULL;
-
   if (st->ref_count == 0) {
     fprintf(stderr, "ERR: invalid storage reference count\n");
     return;
   }
 
+  *storage = NULL;
   --st->ref_count;
 
   if (st->ref_count == 0) {
@@ -447,10 +445,15 @@ static Ten_Status tensor_create_initialized(Tensor *t, DataType dtype,
     return status;
 
   tmp.storage = calloc(1, sizeof(*tmp.storage));
+
   if (tmp.storage == NULL) {
     release_tensor(&tmp);
     return (Ten_Status){TT_ERR_NO_MEMORY, "storage metadata allocation failed"};
   }
+  tmp.storage->n_bytes = n_bytes;
+  tmp.storage->dtype = dtype;
+  tmp.storage->device = dev;
+  tmp.storage->ref_count = 1;
 
   status = storage_allocate((void **)&tmp.storage->data, dev, n_bytes);
   if (status.stype != TT_OK) {
@@ -462,11 +465,6 @@ static Ten_Status tensor_create_initialized(Tensor *t, DataType dtype,
     release_tensor(&tmp);
     return (Ten_Status){TT_ERR_INTERNAL, "tensor data initialization failed"};
   }
-
-  tmp.storage->n_bytes = n_bytes;
-  tmp.storage->dtype = dtype;
-  tmp.storage->device = dev;
-  tmp.storage->ref_count = 1;
 
   *t = tmp;
 

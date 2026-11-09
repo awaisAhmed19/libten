@@ -16,7 +16,7 @@ Ten_Status cpu_allocate(void **ptr, size_t n_bytes) {
   *ptr = malloc(n_bytes);
 
   if (*ptr == NULL)
-    return status_error(TT_ERR_INTERNAL, "CPU memory allocation failed");
+    return status_error(TT_ERR_NO_MEMORY, "CPU memory allocation failed");
 
   return status_ok();
 }

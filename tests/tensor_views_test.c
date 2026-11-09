@@ -1043,6 +1043,297 @@ static int test_slice_empty_tensor(void) {
   return 0;
 }
 /*
+ * 16. Transpose and permute metadata views
+ */
+static int test_transpose_view(void) {
+  const i64 shape[] = {2, 3};
+  const float data[] = {1, 2, 3, 4, 5, 6};
+  Tensor src = {0};
+  Tensor dst = {0};
+
+  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 2, CPU_DEVICE),
+               TT_OK);
+  CHECK_STATUS(T_tensor_transpose(&dst, &src, 0, 1), TT_OK);
+
+  CHECK(dst.storage == src.storage);
+  CHECK(src.storage->ref_count == 2);
+  CHECK(dst.rank == 2 && dst.num_el == 6);
+  CHECK(dst.shape[0] == 3 && dst.shape[1] == 2);
+  CHECK(dst.strides[0] == 1 && dst.strides[1] == 3);
+  CHECK(dst.offset == src.offset);
+
+  const float *values = (const float *)dst.storage->data;
+  CHECK(values[dst.offset + 0 * dst.strides[0] + 0 * dst.strides[1]] == 1);
+  CHECK(values[dst.offset + 1 * dst.strides[0] + 0 * dst.strides[1]] == 2);
+  CHECK(values[dst.offset + 2 * dst.strides[0] + 0 * dst.strides[1]] == 3);
+  CHECK(values[dst.offset + 0 * dst.strides[0] + 1 * dst.strides[1]] == 4);
+
+  T_destroy_tensor(&dst);
+  T_destroy_tensor(&src);
+  return 0;
+}
+
+static int test_permute_view(void) {
+  const i64 shape[] = {2, 3, 4};
+  i64 dims[] = {2, 0, 1};
+  float data[24];
+  for (i32 i = 0; i < 24; ++i)
+    data[i] = (float)i;
+
+  Tensor src = {0};
+  Tensor dst = {0};
+  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 3, CPU_DEVICE),
+               TT_OK);
+  CHECK_STATUS(T_tensor_permute(&dst, &src, dims, 3), TT_OK);
+
+  CHECK(dst.storage == src.storage);
+  CHECK(src.storage->ref_count == 2);
+  CHECK(dst.rank == 3 && dst.num_el == 24);
+  CHECK(dst.shape[0] == 4 && dst.shape[1] == 2 && dst.shape[2] == 3);
+  CHECK(dst.strides[0] == 1 && dst.strides[1] == 12 && dst.strides[2] == 4);
+
+  const float *values = (const float *)dst.storage->data;
+  CHECK(values[0 * dst.strides[0] + 0 * dst.strides[1] + 0 * dst.strides[2]] ==
+        0);
+  CHECK(values[1 * dst.strides[0] + 0 * dst.strides[1] + 0 * dst.strides[2]] ==
+        1);
+  CHECK(values[0 * dst.strides[0] + 1 * dst.strides[1] + 0 * dst.strides[2]] ==
+        12);
+
+  T_destroy_tensor(&dst);
+  T_destroy_tensor(&src);
+  return 0;
+}
+
+/*
+ * 17. Squeeze and squeeze-dimension views
+ */
+static int test_squeeze_view(void) {
+  const i64 shape[] = {1, 2, 1, 3};
+  const float data[] = {1, 2, 3, 4, 5, 6};
+  Tensor src = {0};
+  Tensor dst = {0};
+
+  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 4, CPU_DEVICE),
+               TT_OK);
+  CHECK_STATUS(T_tensor_squeeze(&dst, &src), TT_OK);
+
+  CHECK(dst.storage == src.storage);
+  CHECK(src.storage->ref_count == 2);
+  CHECK(dst.rank == 2 && dst.num_el == 6);
+  CHECK(dst.shape[0] == 2 && dst.shape[1] == 3);
+  CHECK(dst.strides[0] == 3 && dst.strides[1] == 1);
+
+  T_destroy_tensor(&dst);
+  T_destroy_tensor(&src);
+  return 0;
+}
+
+static int test_squeeze_dim_view(void) {
+  const i64 shape[] = {1, 2, 1, 3};
+  const float data[] = {1, 2, 3, 4, 5, 6};
+  Tensor src = {0};
+  Tensor dst = {0};
+
+  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 4, CPU_DEVICE),
+               TT_OK);
+  CHECK_STATUS(T_tensor_squeeze_dim(&dst, &src, 2), TT_OK);
+
+  CHECK(dst.storage == src.storage);
+  CHECK(dst.rank == 3 && dst.num_el == 6);
+  CHECK(dst.shape[0] == 1 && dst.shape[1] == 2 && dst.shape[2] == 3);
+  CHECK(dst.strides[0] == 6 && dst.strides[1] == 3 && dst.strides[2] == 1);
+
+  T_destroy_tensor(&dst);
+  T_destroy_tensor(&src);
+  return 0;
+}
+
+static int test_squeeze_scalar_and_empty_views(void) {
+  const float scalar_value = 42.0f;
+  const i64 empty_shape[] = {1, 0, 1};
+  Tensor scalar = {0}, scalar_view = {0};
+  Tensor empty = {0}, empty_view = {0};
+
+  CHECK_STATUS(
+      T_create_tensor_by_data(&scalar, &scalar_value, F32, NULL, 0, CPU_DEVICE),
+      TT_OK);
+  CHECK_STATUS(T_tensor_squeeze(&scalar_view, &scalar), TT_OK);
+  CHECK(scalar_view.rank == 0 && scalar_view.num_el == 1);
+  CHECK(scalar_view.storage == scalar.storage);
+
+  CHECK_STATUS(
+      T_create_tensor_by_data(&empty, NULL, F32, empty_shape, 3, CPU_DEVICE),
+      TT_OK);
+  CHECK_STATUS(T_tensor_squeeze(&empty_view, &empty), TT_OK);
+  CHECK(empty_view.rank == 1 && empty_view.num_el == 0);
+  CHECK(empty_view.shape[0] == 0);
+  CHECK(empty_view.storage == empty.storage);
+  CHECK(empty_view.storage->data == NULL);
+
+  T_destroy_tensor(&empty_view);
+  T_destroy_tensor(&empty);
+  T_destroy_tensor(&scalar_view);
+  T_destroy_tensor(&scalar);
+  return 0;
+}
+
+/*
+ * 18. Unsqueeze views, including insertion at both ends and scalar input
+ */
+static int test_unsqueeze_view_positions(void) {
+  const i64 shape[] = {2, 3};
+  const float data[] = {1, 2, 3, 4, 5, 6};
+  Tensor src = {0};
+  Tensor before = {0}, middle = {0}, after = {0};
+
+  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 2, CPU_DEVICE),
+               TT_OK);
+
+  CHECK_STATUS(T_tensor_unsqueeze(&before, &src, 0), TT_OK);
+  CHECK(before.rank == 3 && before.shape[0] == 1 && before.shape[1] == 2 &&
+        before.shape[2] == 3);
+  CHECK(before.strides[0] == 6 && before.strides[1] == 3 &&
+        before.strides[2] == 1);
+
+  CHECK_STATUS(T_tensor_unsqueeze(&middle, &src, 1), TT_OK);
+  CHECK(middle.shape[0] == 2 && middle.shape[1] == 1 && middle.shape[2] == 3);
+  CHECK(middle.strides[0] == 3 && middle.strides[1] == 3 &&
+        middle.strides[2] == 1);
+
+  CHECK_STATUS(T_tensor_unsqueeze(&after, &src, 2), TT_OK);
+  CHECK(after.shape[0] == 2 && after.shape[1] == 3 && after.shape[2] == 1);
+  CHECK(after.strides[0] == 3 && after.strides[1] == 1 &&
+        after.strides[2] == 1);
+
+  CHECK(before.storage == src.storage && middle.storage == src.storage &&
+        after.storage == src.storage);
+  CHECK(src.storage->ref_count == 4);
+
+  T_destroy_tensor(&before);
+  T_destroy_tensor(&middle);
+  T_destroy_tensor(&after);
+  T_destroy_tensor(&src);
+  return 0;
+}
+
+static int test_unsqueeze_scalar_and_noncontiguous(void) {
+  const float scalar_value = 7.0f;
+  const i64 shape[] = {2, 3};
+  const float data[] = {1, 2, 3, 4, 5, 6};
+  Tensor scalar = {0}, scalar_view = {0};
+  Tensor src = {0}, transposed = {0}, expanded = {0};
+
+  CHECK_STATUS(
+      T_create_tensor_by_data(&scalar, &scalar_value, F32, NULL, 0, CPU_DEVICE),
+      TT_OK);
+  CHECK_STATUS(T_tensor_unsqueeze(&scalar_view, &scalar, 0), TT_OK);
+  CHECK(scalar_view.rank == 1 && scalar_view.shape[0] == 1);
+  CHECK(scalar_view.strides[0] == 1);
+
+  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 2, CPU_DEVICE),
+               TT_OK);
+  CHECK_STATUS(T_tensor_transpose(&transposed, &src, 0, 1), TT_OK);
+  CHECK_STATUS(T_tensor_unsqueeze(&expanded, &transposed, 1), TT_OK);
+  CHECK(expanded.shape[0] == 3 && expanded.shape[1] == 1 &&
+        expanded.shape[2] == 2);
+  CHECK(expanded.strides[0] == 1 && expanded.strides[1] == 6 &&
+        expanded.strides[2] == 3);
+  CHECK(expanded.storage == src.storage);
+
+  T_destroy_tensor(&expanded);
+  T_destroy_tensor(&transposed);
+  T_destroy_tensor(&src);
+  T_destroy_tensor(&scalar_view);
+  T_destroy_tensor(&scalar);
+  return 0;
+}
+
+/*
+ * 19. Invalid view arguments must leave destinations untouched
+ */
+static int test_transform_view_invalid_arguments(void) {
+  const i64 shape[] = {2, 3};
+  const i64 bad_permutation[] = {0, 0};
+  const float data[] = {1, 2, 3, 4, 5, 6};
+  Tensor src = {0};
+  Tensor dst = {0};
+
+  CHECK_STATUS(T_tensor_transpose(&dst, NULL, 0, 1), TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_permute(&dst, NULL, NULL, 0), TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_squeeze(&dst, NULL), TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_squeeze_dim(&dst, NULL, 0), TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_unsqueeze(&dst, NULL, 0), TT_ERR_INVALID_ARG);
+
+  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 2, CPU_DEVICE),
+               TT_OK);
+
+  /* A non-NULL tensor with missing storage must fail without dereferencing it.
+   */
+  Tensor missing_storage = src;
+  missing_storage.storage = NULL;
+  CHECK_STATUS(T_tensor_transpose(&dst, &missing_storage, 0, 1),
+               TT_ERR_INVALID_STATE);
+  CHECK_STATUS(T_tensor_permute(&dst, &missing_storage, shape, 2),
+               TT_ERR_INVALID_STATE);
+  CHECK_STATUS(T_tensor_squeeze(&dst, &missing_storage), TT_ERR_INVALID_STATE);
+  CHECK_STATUS(T_tensor_squeeze_dim(&dst, &missing_storage, 0),
+               TT_ERR_INVALID_STATE);
+  CHECK_STATUS(T_tensor_unsqueeze(&dst, &missing_storage, 0),
+               TT_ERR_INVALID_STATE);
+  CHECK_STATUS(T_tensor_transpose(&dst, &src, -1, 1), TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_transpose(&dst, &src, 0, 2), TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_permute(&dst, &src, bad_permutation, 2),
+               TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_permute(&dst, &src, shape, 1), TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_permute(&dst, &src, NULL, 2), TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_squeeze_dim(&dst, &src, -1), TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_squeeze_dim(&dst, &src, 0), TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_unsqueeze(&dst, &src, -1), TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_tensor_unsqueeze(&dst, &src, 3), TT_ERR_INVALID_ARG);
+
+  CHECK(dst.storage == NULL && dst.shape == NULL && dst.strides == NULL);
+  CHECK(src.storage->ref_count == 1);
+
+  T_destroy_tensor(&src);
+  return 0;
+}
+
+static int test_transform_views_accept_empty_tensor(void) {
+  const i64 shape[] = {2, 0, 4};
+  const i64 permutation[] = {2, 0, 1};
+  Tensor src = {0}, transposed = {0}, permuted = {0}, squeezed = {0};
+  Tensor expanded = {0};
+
+  CHECK_STATUS(T_create_tensor_by_data(&src, NULL, F32, shape, 3, CPU_DEVICE),
+               TT_OK);
+  CHECK_STATUS(T_tensor_transpose(&transposed, &src, 0, 2), TT_OK);
+  CHECK(transposed.num_el == 0 && transposed.storage->data == NULL);
+  CHECK(transposed.shape[0] == 4 && transposed.shape[1] == 0 &&
+        transposed.shape[2] == 2);
+
+  CHECK_STATUS(T_tensor_permute(&permuted, &src, permutation, 3), TT_OK);
+  CHECK(permuted.num_el == 0 && permuted.storage->data == NULL);
+  CHECK(permuted.shape[0] == 4 && permuted.shape[1] == 2 &&
+        permuted.shape[2] == 0);
+
+  CHECK_STATUS(T_tensor_squeeze(&squeezed, &src), TT_OK);
+  CHECK(squeezed.rank == 3 && squeezed.num_el == 0);
+
+  CHECK_STATUS(T_tensor_unsqueeze(&expanded, &src, 1), TT_OK);
+  CHECK(expanded.rank == 4 && expanded.num_el == 0);
+  CHECK(expanded.shape[0] == 2 && expanded.shape[1] == 1 &&
+        expanded.shape[2] == 0 && expanded.shape[3] == 4);
+
+  T_destroy_tensor(&expanded);
+  T_destroy_tensor(&squeezed);
+  T_destroy_tensor(&permuted);
+  T_destroy_tensor(&transposed);
+  T_destroy_tensor(&src);
+  return 0;
+}
+
+/*
  * Main
  *  */
 
@@ -1061,13 +1352,18 @@ int main(void) {
       test_materialize_transposed_tensor() ||
       test_materialize_nonzero_offset() ||
       test_materialize_independent_storage() ||
-      test_materialize_scalar_and_empty() ||
       test_materialize_scalar_and_empty() || test_slice_full() ||
       test_slice_partial() || test_slice_step_two() || test_slice_reverse() ||
       test_slice_reverse_step_two() || test_slice_empty() ||
       test_slice_invalid_arguments() || test_slice_retains_storage() ||
       test_slice_non_contiguous_source() || test_slice_reverse_dim0() ||
-      test_slice_empty_tensor() || test_materialize_reversed_tensor()) {
+      test_slice_empty_tensor() || test_materialize_reversed_tensor() ||
+      test_transpose_view() || test_permute_view() || test_squeeze_view() ||
+      test_squeeze_dim_view() || test_squeeze_scalar_and_empty_views() ||
+      test_unsqueeze_view_positions() ||
+      test_unsqueeze_scalar_and_noncontiguous() ||
+      test_transform_view_invalid_arguments() ||
+      test_transform_views_accept_empty_tensor()) {
     return EXIT_FAILURE;
   }
 

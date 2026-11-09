@@ -15,7 +15,7 @@ Ten_Status cuda_allocate(void **ptr, size_t n_bytes) {
   cudaError_t err = cudaMalloc(ptr, n_bytes);
 
   if (err != cudaSuccess)
-    return status_error(TT_ERR_INTERNAL, cudaGetErrorString(err));
+    return status_error(TT_ERR_NO_MEMORY, cudaGetErrorString(err));
 
   return status_ok();
 }
@@ -30,7 +30,7 @@ Ten_Status cuda_deallocate(void **ptr) {
   cudaError_t err = cudaFree(*ptr);
 
   if (err != cudaSuccess)
-    return status_error(TT_ERR_INTERNAL, cudaGetErrorString(err));
+    return status_error(TT_ERR_NO_MEMORY, cudaGetErrorString(err));
 
   *ptr = NULL;
 
