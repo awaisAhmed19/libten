@@ -11,7 +11,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#ifdef TEN_TEST_HAS_CUDA
+#include <cuda_runtime_api.h>
+#endif
 #include "../include/ten/ten_status.h"
 #include "../include/ten/ten_types.h"
 #include "./tensor_checker.h"
@@ -136,7 +138,29 @@ static int test_success_status(void) {
 
   return 0;
 }
+#ifdef TEN_TEST_HAS_CUDA
 
+static bool cuda_device_available(void) {
+  int count = 0;
+
+  cudaError_t err = cudaGetDeviceCount(&count);
+
+  if (err != cudaSuccess || count == 0) {
+    (void)cudaGetLastError();
+    return false;
+  }
+
+  err = cudaSetDevice(0);
+
+  if (err != cudaSuccess) {
+    (void)cudaGetLastError();
+    return false;
+  }
+
+  return true;
+}
+
+#endif
 static int test_invalid_argument_status(void) {
   const i64 shape[] = {2, 3};
   const float values[] = {1, 2, 3, 4, 5, 6};
