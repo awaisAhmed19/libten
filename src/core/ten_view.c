@@ -194,9 +194,9 @@ Ten_Status T_tensor_transpose(Tensor *dst, const Tensor *src, i32 dim0,
                         "invalid shape or element count overflow");
 
   status = view_alloc(&tmp, src->shape);
-  if (status.stype != TT_OK)
+  if (status.stype != TT_OK) {
     return status;
-
+  }
   for (i64 i = 0; i < src->rank; ++i) {
     tmp.shape[i] = src->shape[i];
     tmp.strides[i] = src->strides[i];
@@ -250,10 +250,11 @@ Ten_Status T_tensor_permute(Tensor *dst, const Tensor *src, const i64 *dims,
   tmp.rank = src->rank;
   tmp.offset = src->offset;
 
-  if (!T_get_numel(src->rank, src->shape, &tmp.num_el))
+  if (!T_get_numel(src->rank, src->shape, &tmp.num_el)) {
+    T_destroy_tensor(&tmp);
     return status_error(TT_ERR_OVERFLOW,
                         "invalid shape or element count overflow");
-
+  }
   status = view_alloc(&tmp, src->shape);
   if (status.stype != TT_OK)
     return status;

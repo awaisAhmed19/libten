@@ -211,18 +211,24 @@ static Ten_Status storage_allocate(void **out, Device device, size_t n_bytes) {
   return backend->memory.allocate(out, n_bytes);
 }
 
-static bool storage_copy_from_host(void *dst, Device device, const void *src,
-                                   size_t n_bytes) {
+static Ten_Status storage_copy_from_host(void *dst, Device device,
+                                         const void *src, size_t n_bytes) {
   if (n_bytes == 0)
-    return true;
+    return status_ok();
 
   if (dst == NULL || src == NULL)
-    return false;
+    return status_error(TT_ERR_INVALID_ARG,
+                        "source or destination pointer is NULL");
 
   const Ten_Backend *backend = T_get_backend(device);
 
-  if (backend == NULL || backend->memory.copy == NULL)
-    return false;
+  if (backend == NULL)
+    return status_error(TT_ERR_UNSUPPORTED,
+                        "requested device backend is unavailable");
+
+  if (backend->memory.copy == NULL)
+    return status_error(TT_ERR_INVALID_STATE,
+                        "backend copy function is missing");
 
   Ten_CopyKind kind;
 
@@ -236,12 +242,10 @@ static bool storage_copy_from_host(void *dst, Device device, const void *src,
     break;
 
   default:
-    return false;
+    return status_error(TT_ERR_UNSUPPORTED, "unsupported device type");
   }
 
-  Ten_Status status = backend->memory.copy(dst, src, n_bytes, kind);
-
-  return status.stype == TT_OK;
+  return backend->memory.copy(dst, src, n_bytes, kind);
 }
 
 static Ten_Status storage_deallocate(void *data, Device device) {
@@ -262,6 +266,23 @@ static Ten_Status storage_deallocate(void *data, Device device) {
 
   return backend->memory.deallocate(&ptr);
 }
+static void storage_destroy(TensorStorage **storage) {
+  if (storage == NULL || *storage == NULL)
+    return;
+
+  TensorStorage *st = *storage;
+  *storage = NULL;
+
+  if (st->data != NULL) {
+    Ten_Status status = storage_deallocate(st->data, st->device);
+
+    if (status.stype != TT_OK)
+      T_PRINT_STATUS(status);
+  }
+
+  free(st);
+}
+
 bool T_storage_retain(TensorStorage *storage) {
   if (storage == NULL || storage->ref_count == 0)
     return false;
@@ -287,11 +308,8 @@ void T_storage_release(TensorStorage **storage) {
   *storage = NULL;
   --st->ref_count;
 
-  if (st->ref_count == 0) {
-    Ten_Status status = storage_deallocate(st->data, st->device);
-    T_PRINT_STATUS(status);
-    free(st);
-  }
+  if (st->ref_count == 0)
+    storage_destroy(&st);
 }
 
 Ten_Status T_validate_new_tensor(const Tensor *t, DataType dtype,
@@ -382,7 +400,6 @@ static bool initialize_data(void *data, DataType dtype, i64 numel,
 static void release_tensor(Tensor *t) {
   if (t == NULL)
     return;
-
   T_storage_release(&t->storage);
   free_shape(t->shape);
   free_strides(t->strides);
@@ -448,8 +465,9 @@ static Ten_Status tensor_create_initialized(Tensor *t, DataType dtype,
 
   if (tmp.storage == NULL) {
     release_tensor(&tmp);
-    return (Ten_Status){TT_ERR_NO_MEMORY, "storage metadata allocation failed"};
+    return status_error(TT_ERR_NO_MEMORY, "storage metadata allocation failed");
   }
+
   tmp.storage->n_bytes = n_bytes;
   tmp.storage->dtype = dtype;
   tmp.storage->device = dev;
@@ -490,9 +508,10 @@ Ten_Status T_create_tensor_storage(TensorStorage **ts, const void *input_data,
   if (status.stype != TT_OK)
     return status;
 
-  if (!storage_copy_from_host((*ts)->data, dev, input_data, n_bytes)) {
+  status = storage_copy_from_host((*ts)->data, dev, input_data, n_bytes);
+  if (status.stype != TT_OK) {
     T_storage_release(ts);
-    return status_error(TT_ERR_INTERNAL, "storage data copy failed");
+    return status_error(status.stype, status.msg);
   }
 
   return status_ok();
@@ -524,8 +543,8 @@ Ten_Status T_create_empty_storage(TensorStorage **storage, DataType dtype,
 
   Ten_Status status = storage_allocate((void **)&tmp->data, device, n_bytes);
   if (status.stype != TT_OK) {
-    free(tmp);
-    return status_error(status.stype, status.msg);
+    T_storage_release(&tmp);
+    return status;
   }
 
   tmp->n_bytes = n_bytes;
@@ -897,7 +916,9 @@ Ten_Status T_tensor_reshape(Tensor *dst, const Tensor *src, const i64 *shape,
     return status;
   }
 
-  if (T_copy_tensor_data(tmp.storage, src).stype != TT_OK) {
+  status = T_copy_tensor_data(tmp.storage, src);
+
+  if (status.stype != TT_OK) {
     release_tensor(&tmp);
     return status;
   }

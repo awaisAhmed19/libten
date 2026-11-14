@@ -14,9 +14,12 @@ Ten_Status cuda_allocate(void **ptr, size_t n_bytes) {
 
   cudaError_t err = cudaMalloc(ptr, n_bytes);
 
-  if (err != cudaSuccess)
-    return status_error(TT_ERR_NO_MEMORY, cudaGetErrorString(err));
+  if (err != cudaSuccess) {
+    enum Ten_StatusType code =
+        (err == cudaErrorMemoryAllocation) ? TT_ERR_CUDA : TT_ERR_NO_MEMORY;
 
+    return status_error(code, cudaGetErrorString(err));
+  }
   return status_ok();
 }
 
@@ -29,8 +32,12 @@ Ten_Status cuda_deallocate(void **ptr) {
 
   cudaError_t err = cudaFree(*ptr);
 
-  if (err != cudaSuccess)
-    return status_error(TT_ERR_NO_MEMORY, cudaGetErrorString(err));
+  if (err != cudaSuccess) {
+    enum Ten_StatusType code =
+        (err == cudaErrorMemoryAllocation) ? TT_ERR_CUDA : TT_ERR_NO_MEMORY;
+
+    return status_error(code, cudaGetErrorString(err));
+  }
 
   *ptr = NULL;
 
@@ -71,8 +78,11 @@ Ten_Status cuda_copy(void *dst, const void *src, size_t n_bytes,
 
   cudaError_t err = cudaMemcpy(dst, src, n_bytes, cuda_kind);
 
-  if (err != cudaSuccess)
-    return status_error(TT_ERR_INTERNAL, cudaGetErrorString(err));
+  if (err != cudaSuccess) {
+    enum Ten_StatusType code =
+        (err == cudaErrorMemoryAllocation) ? TT_ERR_CUDA : TT_ERR_NO_MEMORY;
 
+    return status_error(code, cudaGetErrorString(err));
+  }
   return status_ok();
 }
