@@ -16,7 +16,7 @@ Ten_Status cuda_allocate(void **ptr, size_t n_bytes) {
 
   if (err != cudaSuccess) {
     enum Ten_StatusType code =
-        (err == cudaErrorMemoryAllocation) ? TT_ERR_CUDA : TT_ERR_NO_MEMORY;
+        (err == cudaErrorMemoryAllocation) ? TT_ERR_NO_MEMORY : TT_ERR_CUDA;
 
     return status_error(code, cudaGetErrorString(err));
   }
@@ -34,7 +34,7 @@ Ten_Status cuda_deallocate(void **ptr) {
 
   if (err != cudaSuccess) {
     enum Ten_StatusType code =
-        (err == cudaErrorMemoryAllocation) ? TT_ERR_CUDA : TT_ERR_NO_MEMORY;
+        (err == cudaErrorMemoryAllocation) ? TT_ERR_NO_MEMORY : TT_ERR_CUDA;
 
     return status_error(code, cudaGetErrorString(err));
   }
@@ -80,7 +80,7 @@ Ten_Status cuda_copy(void *dst, const void *src, size_t n_bytes,
 
   if (err != cudaSuccess) {
     enum Ten_StatusType code =
-        (err == cudaErrorMemoryAllocation) ? TT_ERR_CUDA : TT_ERR_NO_MEMORY;
+        (err == cudaErrorMemoryAllocation) ? TT_ERR_NO_MEMORY : TT_ERR_CUDA;
 
     return status_error(code, cudaGetErrorString(err));
   }
