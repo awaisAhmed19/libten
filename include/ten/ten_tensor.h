@@ -70,8 +70,8 @@ extern Ten_Status T_tensor_zeros(Tensor *t, const DataType dtype,
                                  const Device dev);
 
 extern Ten_Status T_tensor_fill_value(Tensor *t, const DataType dtype,
-                                 const i64 *shape, const i32 rank,
-                                 const Device dev, const void *scalar);
+                                      const i64 *shape, const i32 rank,
+                                      const Device dev, const void *scalar);
 
 /*
  * 3. Lifetime
@@ -98,16 +98,16 @@ extern i32 T_get_rank(const Tensor *t);
 extern bool T_get_shape(const Tensor *t, i64 *shape_out, i32 capacity);
 
 /* Returns the size of one dimension, or -1 for an invalid dimension. */
-extern i64 T_get_dim(const Tensor *t, i32 dim);
+extern bool T_get_dim(const Tensor *t, i32 dim);
 
 /* Returns the tensor's data type. */
-extern DataType T_get_dtype(const Tensor *t);
+extern bool T_get_dtype(const Tensor *t, DataType *out_t);
 
 /* Returns the tensor's device. */
-extern Device T_get_device(const Tensor *t);
+extern bool T_get_device(const Tensor *t, Device *out);
 
 /* Returns the size of the logical tensor data in bytes, or 0 on error. */
-extern size_t T_get_nbytes(const Tensor *t);
+extern bool T_get_nbytes(const Tensor *t, size_t *nbytes);
 
 /*
  * 5. Layout queries
@@ -143,7 +143,7 @@ extern Ten_Status T_tensor_is_contiguous(const Tensor *t, bool *out);
  * The pointer does not imply that the tensor is contiguous.
  * Check T_tensor_is_contiguous() before flat iteration.
  */
-extern void *T_data(Tensor *t);
+extern Ten_Status T_data(const Tensor *src, const void **data);
 
 /*
  * Returns a const pointer to the first logical element
@@ -187,7 +187,6 @@ extern Ten_Status T_tensor_reshape_view(Tensor *dst, const Tensor *src,
  */
 extern Ten_Status T_tensor_reshape(Tensor *dst, const Tensor *src,
                                    const i64 *shape, i32 rank);
-
 #ifdef __cplusplus
 }
 #endif

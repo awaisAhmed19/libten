@@ -110,10 +110,33 @@ static int test_contiguous_strides(void) {
   T_calculate_strides(NULL, NULL, 0);
   return 0;
 }
+static int test_get_scalar_shape(void) {
+  const float value = 42.0f;
+  Tensor t = {0};
 
+  CHECK_STATUS(T_create_tensor_by_data(&t, &value, F32, NULL, 0, CPU_DEVICE),
+               TT_OK);
+
+  CHECK(T_get_shape(&t, NULL, 0));
+
+  T_destroy_tensor(&t);
+  return 0;
+}
+static int test_get_device_invalid_tensor(void) {
+  Device device = {.devtype = CPU, .id = 0};
+
+  CHECK(!T_get_device(NULL, &device));
+  CHECK(device.devtype == CPU);
+  CHECK(device.id == -1);
+
+  CHECK(!T_get_device(NULL, NULL));
+
+  return 0;
+}
 int main(void) {
   if (test_rank_validation() || test_shape_validation() ||
-      test_element_count() || test_contiguous_strides()) {
+      test_element_count() || test_contiguous_strides() ||
+      test_get_scalar_shape() || test_get_device_invalid_tensor()) {
     return EXIT_FAILURE;
   }
 

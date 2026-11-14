@@ -42,8 +42,13 @@ static Ten_Status view_alloc(Tensor *tmp, const i64 *shape) {
   return status_ok();
 }
 
-/* Retains src's storage and commits tmp to dst. Destroys tmp on failure. */
 static Ten_Status view_commit(Tensor *dst, Tensor *tmp, const Tensor *src) {
+  if (dst == NULL || tmp == NULL || src == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "invalid view commit arguments");
+
+  if (src->storage == NULL)
+    return status_error(TT_ERR_INVALID_STATE, "source tensor storage is NULL");
+
   if (!T_storage_retain(src->storage)) {
     T_destroy_tensor(tmp);
     return status_error(TT_ERR_INVALID_STATE, "storage retain failed");
@@ -51,6 +56,7 @@ static Ten_Status view_commit(Tensor *dst, Tensor *tmp, const Tensor *src) {
 
   tmp->storage = src->storage;
   *dst = *tmp;
+  *tmp = (Tensor){0};
 
   return status_ok();
 }
@@ -681,51 +687,53 @@ Ten_Status T_tensor_contiguous_materialize(Tensor *dst, const Tensor *src) {
   *dst = tmp;
   return status_ok();
 }
+
 Ten_Status T_tensor_slice(Tensor *dst, const Tensor *src, i32 dim, i64 start,
                           i64 end, i64 step) {
-  // 1. Validate source.
-  if (src == NULL || src->storage == NULL || src->shape == NULL ||
-      src->strides == NULL)
-    return status_error(TT_ERR_INVALID_ARG, "invalid source tensor");
+  // Validate source.
+  if (src == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "source tensor is NULL");
+
+  if (src->storage == NULL)
+    return status_error(TT_ERR_INVALID_STATE, "source tensor storage is NULL");
 
   if (!T_is_ranks_valid(src->rank))
     return status_error(TT_ERR_INVALID_ARG, "invalid source rank");
 
-  if (src->storage->n_bytes > 0 && src->storage->data == NULL)
-    return status_error(TT_ERR_INVALID_ARG, "source data is NULL");
-
-  Ten_Status status = T_validate_new_tensor(
-      dst, src->storage->dtype, src->shape, src->rank, src->storage->device);
-  if (status.stype != TT_OK)
-    return status;
-
-  if (!T_is_dtype_valid(src->storage->dtype)) {
-    return status_error(TT_ERR_DTYPE_UNSUPPORTED, "Invalid src Data type");
-  }
-
   if (dim < 0 || dim >= src->rank)
     return status_error(TT_ERR_INVALID_ARG, "invalid slice dimension");
+
+  if (src->shape == NULL || src->strides == NULL)
+    return status_error(TT_ERR_INVALID_STATE,
+                        "source tensor metadata is incomplete");
+
+  if (!T_is_dtype_valid(src->storage->dtype))
+    return status_error(TT_ERR_DTYPE_UNSUPPORTED, "invalid source data type");
+
+  // Validate destination.
+  Ten_Status status = T_validate_new_tensor(
+      dst, src->storage->dtype, src->shape, src->rank, src->storage->device);
+
+  if (status.stype != TT_OK)
+    return status;
 
   if (step == 0)
     return status_error(TT_ERR_INVALID_ARG, "slice step cannot be zero");
 
-  // Avoid overflow when calculating abs(step).
   if (step == (-I64_MAX - 1))
     return status_error(TT_ERR_INVALID_ARG, "slice step overflow");
 
   i64 dim_size = src->shape[dim];
   i64 length = 0;
-  if (step > 0) {
 
+  if (step > 0) {
     if (start < 0 || start > dim_size || end < 0 || end > dim_size ||
         start > end)
       return status_error(TT_ERR_INVALID_ARG, "invalid slice bounds");
 
     if (start < end)
       length = 1 + (end - 1 - start) / step;
-
   } else {
-
     if (start < -1 || start >= dim_size || end < -1 || end >= dim_size ||
         start <= end)
       return status_error(TT_ERR_INVALID_ARG, "invalid reverse slice bounds");
@@ -733,6 +741,7 @@ Ten_Status T_tensor_slice(Tensor *dst, const Tensor *src, i32 dim, i64 start,
     if (start > end)
       length = 1 + (start - 1 - end) / (-step);
   }
+
   Tensor tmp = {0};
   tmp.rank = src->rank;
   tmp.offset = src->offset;
@@ -740,6 +749,7 @@ Ten_Status T_tensor_slice(Tensor *dst, const Tensor *src, i32 dim, i64 start,
   status = view_alloc(&tmp, src->shape);
   if (status.stype != TT_OK)
     return status;
+
   memcpy(tmp.strides, src->strides, sizeof(i64) * src->rank);
 
   tmp.shape[dim] = length;

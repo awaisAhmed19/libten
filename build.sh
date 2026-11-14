@@ -41,7 +41,7 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_ROOT="${ROOT_DIR}/build"
 CUDA_ARCH="${CUDA_ARCH:-75}"
 BUILD_JOBS="${BUILD_JOBS:-$(nproc 2>/dev/null || echo 4)}"
-ENABLE_SANITIZERS="${ENABLE_SANITIZERS:-OFF}"
+ENABLE_SANITIZERS="${ENABLE_SANITIZERS:-ON}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-$HOME/.local}"
 
 require_project_files() {

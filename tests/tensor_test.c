@@ -124,11 +124,41 @@ static int test_shared_storage_lifetime(void) {
   CHECK(view.storage == NULL && view.shape == NULL && view.strides == NULL);
   return 0;
 }
+static int test_tensor_reshape_success(void) {
+  const i64 shape[] = {2, 3};
+  const i64 new_shape[] = {3, 2};
+  const float data[] = {1, 2, 3, 4, 5, 6};
 
+  Tensor src = {0};
+  Tensor dst = {0};
+
+  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 2, CPU_DEVICE),
+               TT_OK);
+
+  CHECK_STATUS(T_tensor_reshape(&dst, &src, new_shape, 2), TT_OK);
+
+  CHECK(dst.rank == 2);
+  CHECK(dst.shape[0] == 3);
+  CHECK(dst.shape[1] == 2);
+  CHECK(dst.num_el == 6);
+
+  const void *raw_data = NULL;
+  CHECK_STATUS(T_data(&dst, &raw_data), TT_OK);
+
+  const float *result = (const float *)raw_data;
+  CHECK(result != NULL);
+
+  for (i64 i = 0; i < 6; ++i)
+    CHECK(result[i] == data[i]);
+
+  T_destroy_tensor(&src);
+  T_destroy_tensor(&dst);
+  return 0;
+}
 int main(void) {
   if (test_constructs_and_copies_data() || test_scalar_and_empty_tensors() ||
       test_invalid_construction_is_transactional() ||
-      test_shared_storage_lifetime()) {
+      test_shared_storage_lifetime() || test_tensor_reshape_success()) {
     return EXIT_FAILURE;
   }
 

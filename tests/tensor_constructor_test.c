@@ -36,16 +36,26 @@ static int test_rejects_null_output(void) {
 }
 
 static int test_rejects_invalid_rank(void) {
+  int result = EXIT_FAILURE;
   Tensor *t = calloc(1, sizeof(*t));
   const float data[] = {1.0f};
 
   CHECK(t != NULL);
-  CHECK_STATUS(T_create_tensor_by_data(t, data, F32, NULL, -1,
-                                       (Device){.devtype = CPU, .id = 0}),
+
+  CHECK_STATUS(T_create_tensor_by_data(t, data, F32, NULL, -1, cpu_device()),
                TT_ERR_INVALID_ARG);
+
   CHECK(tensor_is_empty(t));
-  T_destroy_tensor(t);
-  return 0;
+
+  result = 0;
+
+cleanup:
+  if (t != NULL) {
+    T_destroy_tensor(t);
+    free(t);
+  }
+
+  return result;
 }
 
 static int test_constructs_and_copies_f32(void) {

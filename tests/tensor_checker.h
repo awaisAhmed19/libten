@@ -9,6 +9,7 @@
  */
 static int tests_run;
 
+#define CPU_DEVICE ((Device){.devtype = CPU, .id = 0})
 #define CHECK(expr)                                                            \
   do {                                                                         \
     ++tests_run;                                                               \
