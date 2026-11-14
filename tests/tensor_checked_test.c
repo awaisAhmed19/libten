@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #ifdef TEN_TEST_HAS_CUDA
+#include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
 #endif
 #include "../include/ten/ten_status.h"
