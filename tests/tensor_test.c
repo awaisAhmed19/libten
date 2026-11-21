@@ -41,8 +41,7 @@ static int test_constructs_and_copies_data(void) {
   float input[] = {1, 2, 3, 4, 5, 6};
   Tensor t = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&t, input, F32, shape, 2, CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&t, input, F32, shape, 2, CPU_DEVICE), TT_OK);
   CHECK(t.rank == 2 && t.num_el == 6 && t.offset == 0);
   CHECK(t.shape[0] == 2 && t.shape[1] == 3);
   CHECK(t.strides[0] == 3 && t.strides[1] == 1);
@@ -64,16 +63,14 @@ static int test_scalar_and_empty_tensors(void) {
   Tensor s = {0};
   Tensor e = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&s, &scalar, F32, NULL, 0, CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&s, &scalar, F32, NULL, 0, CPU_DEVICE), TT_OK);
   CHECK(s.rank == 0 && s.num_el == 1);
   CHECK(s.shape == NULL && s.strides == NULL);
   CHECK(*(float *)s.storage->data == 42.0f);
   T_destroy_tensor(&s);
 
-  CHECK_STATUS(
-      T_create_tensor_by_data(&e, NULL, F32, empty_shape, 3, CPU_DEVICE),
-      TT_OK);
+  CHECK_STATUS(T_create_tensor(&e, NULL, F32, empty_shape, 3, CPU_DEVICE),
+               TT_OK);
   CHECK(e.rank == 3 && e.num_el == 0);
   CHECK(e.storage != NULL && e.storage->n_bytes == 0);
   CHECK(e.shape[0] == 2 && e.shape[1] == 0 && e.shape[2] == 4);
@@ -86,16 +83,13 @@ static int test_invalid_construction_is_transactional(void) {
   const float values[] = {1, 2};
   Tensor t = {0};
 
-  CHECK_STATUS(
-      T_create_tensor_by_data(NULL, values, F32, negative, 2, CPU_DEVICE),
-      TT_ERR_INVALID_ARG);
-  CHECK_STATUS(
-      T_create_tensor_by_data(&t, values, F32, negative, 2, CPU_DEVICE),
-      TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_create_tensor(NULL, values, F32, negative, 2, CPU_DEVICE),
+               TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_create_tensor(&t, values, F32, negative, 2, CPU_DEVICE),
+               TT_ERR_INVALID_ARG);
   CHECK(t.storage == NULL && t.shape == NULL && t.strides == NULL);
-  CHECK_STATUS(
-      T_create_tensor_by_data(&t, NULL, F32, (const i64[]){2}, 1, CPU_DEVICE),
-      TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_create_tensor(&t, NULL, F32, (const i64[]){2}, 1, CPU_DEVICE),
+               TT_ERR_INVALID_ARG);
   CHECK(t.storage == NULL && t.shape == NULL && t.strides == NULL);
   return 0;
 }
@@ -132,8 +126,7 @@ static int test_tensor_reshape_success(void) {
   Tensor src = {0};
   Tensor dst = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 2, CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, data, F32, shape, 2, CPU_DEVICE), TT_OK);
 
   CHECK_STATUS(T_tensor_reshape(&dst, &src, new_shape, 2), TT_OK);
 

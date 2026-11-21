@@ -401,7 +401,7 @@ static void storage_destroy(TensorStorage **storage) {
 
   free(st);
 }
-Ten_Status T_data(const Tensor *src, const void **data) {
+Ten_Status T_data(const Tensor *src, void **data) {
   if (src == NULL)
     return status_error(TT_ERR_INVALID_ARG, "source tensor is NULL");
 
@@ -470,7 +470,20 @@ Ten_Status T_validate_new_tensor(const Tensor *t, DataType dtype,
 
   return (Ten_Status){TT_OK, "success"};
 }
+Ten_Status T_const_data(const Tensor *t, const void **data) {
+  if (t == NULL || data == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "Invalid argument");
 
+  *data = NULL;
+
+  if (t->storage == NULL)
+    return status_error(TT_ERR_INVALID_STATE, "Tensor has no storage");
+
+  *data = (const void *)((const char *)t->storage->data +
+                         t->offset * T_get_dtype_size(t->storage->dtype));
+
+  return status_ok();
+}
 static bool initialize_data(void *data, DataType dtype, i64 numel,
                             FillMode mode, const void *scalar) {
   if (numel < 0)
@@ -685,6 +698,7 @@ Ten_Status T_create_empty_storage(TensorStorage **storage, DataType dtype,
     return status_error(TT_ERR_NO_MEMORY, "storage metadata allocation failed");
 
   Ten_Status status = storage_allocate((void **)&tmp->data, device, n_bytes);
+
   if (status.stype != TT_OK) {
     free(tmp);
     return status;
@@ -975,9 +989,9 @@ Ten_Status T_tensor_is_contiguous(const Tensor *t, bool *out) {
   return status_ok();
 }
 
-Ten_Status T_create_tensor_by_data(Tensor *t, const void *input_data,
-                                   const DataType i_dtype, const i64 *i_shape,
-                                   const i32 i_ranks, const Device dev) {
+Ten_Status T_create_tensor(Tensor *t, const void *input_data,
+                           const DataType i_dtype, const i64 *i_shape,
+                           const i32 i_ranks, const Device dev) {
   Ten_Status status = T_validate_new_tensor(t, i_dtype, i_shape, i_ranks, dev);
   if (status.stype != TT_OK)
     return status;

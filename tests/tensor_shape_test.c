@@ -9,7 +9,8 @@
 #include "../include/ten/ten_types.h"
 
 size_t T_get_dtype_size_in_byte(DataType dtype);
-#include "../src/core/ten_tensor.c"
+#include "../include/ten/ten_tensor.h"
+#include "../src/internal/ten_tensor.h"
 
 size_t T_get_dtype_size_in_bytes(DataType dtype) {
   switch (dtype) {

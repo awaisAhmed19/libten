@@ -109,9 +109,8 @@ static int test_shape_byte_size_overflow(void) {
   Tensor t = {0};
   const float dummy = 1.0f;
 
-  CHECK_STATUS(
-      T_create_tensor_by_data(&t, &dummy, F32, huge_shape, 2, cpu_device()),
-      TT_ERR_OVERFLOW);
+  CHECK_STATUS(T_create_tensor(&t, &dummy, F32, huge_shape, 2, cpu_device()),
+               TT_ERR_OVERFLOW);
 
   CHECK(tensor_is_empty(&t));
   return 0;
@@ -126,8 +125,7 @@ static int test_success_status(void) {
   const float values[] = {1, 2, 3, 4, 5, 6};
   Tensor t = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&t, values, F32, shape, 2, cpu_device()),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&t, values, F32, shape, 2, cpu_device()), TT_OK);
 
   CHECK(t.storage != NULL);
   CHECK(t.storage->ref_count == 1);
@@ -167,18 +165,16 @@ static int test_invalid_argument_status(void) {
   const float values[] = {1, 2, 3, 4, 5, 6};
   Tensor t = {0};
 
-  CHECK_STATUS(
-      T_create_tensor_by_data(NULL, values, F32, shape, 2, cpu_device()),
-      TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_create_tensor(NULL, values, F32, shape, 2, cpu_device()),
+               TT_ERR_INVALID_ARG);
 
-  CHECK_STATUS(T_create_tensor_by_data(&t, NULL, F32, shape, 2, cpu_device()),
+  CHECK_STATUS(T_create_tensor(&t, NULL, F32, shape, 2, cpu_device()),
                TT_ERR_INVALID_ARG);
 
   const i64 invalid_shape[] = {-1, 3};
 
-  CHECK_STATUS(
-      T_create_tensor_by_data(&t, values, F32, invalid_shape, 2, cpu_device()),
-      TT_ERR_INVALID_ARG);
+  CHECK_STATUS(T_create_tensor(&t, values, F32, invalid_shape, 2, cpu_device()),
+               TT_ERR_INVALID_ARG);
 
   CHECK(tensor_is_empty(&t));
   return 0;
@@ -189,11 +185,10 @@ static int test_invalid_state_status(void) {
   const float values[] = {1, 2};
   Tensor t = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&t, values, F32, shape, 1, cpu_device()),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&t, values, F32, shape, 1, cpu_device()), TT_OK);
 
   /* An initialized tensor cannot be used as a new destination. */
-  CHECK_STATUS(T_create_tensor_by_data(&t, values, F32, shape, 1, cpu_device()),
+  CHECK_STATUS(T_create_tensor(&t, values, F32, shape, 1, cpu_device()),
                TT_ERR_INVALID_STATE);
 
   T_destroy_tensor(&t);
@@ -208,7 +203,7 @@ static int test_unsupported_dtype_status(void) {
   Tensor t = {0};
 
   CHECK_STATUS(
-      T_create_tensor_by_data(&t, values, (DataType)-1, shape, 1, cpu_device()),
+      T_create_tensor(&t, values, (DataType)-1, shape, 1, cpu_device()),
       TT_ERR_DTYPE_UNSUPPORTED);
 
   CHECK(tensor_is_empty(&t));
@@ -225,8 +220,7 @@ static int test_unsupported_device_status(void) {
   if (cuda_device_available()) {
     Device device = {.devtype = CUDA, .id = 0};
 
-    CHECK_STATUS(T_create_tensor_by_data(&t, values, F32, shape, 1, device),
-                 TT_OK);
+    CHECK_STATUS(T_create_tensor(&t, values, F32, shape, 1, device), TT_OK);
 
     CHECK(!tensor_is_empty(&t));
     T_destroy_tensor(&t);
@@ -236,7 +230,7 @@ static int test_unsupported_device_status(void) {
 
   Device device = {.devtype = CUDA, .id = 0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&t, values, F32, shape, 1, device),
+  CHECK_STATUS(T_create_tensor(&t, values, F32, shape, 1, device),
                TT_ERR_UNSUPPORTED);
 
   CHECK(tensor_is_empty(&t));
@@ -266,9 +260,8 @@ static int test_allocation_failures_leave_empty_tensor(void) {
     allocation_calls = 0;
     fail_allocation_at = 0;
 
-    CHECK_STATUS(
-        T_create_tensor_by_data(&probe, values, F32, shape, 2, cpu_device()),
-        TT_OK);
+    CHECK_STATUS(T_create_tensor(&probe, values, F32, shape, 2, cpu_device()),
+                 TT_OK);
 
     observed_allocation_count = allocation_calls;
     T_destroy_tensor(&probe);
@@ -282,9 +275,8 @@ static int test_allocation_failures_leave_empty_tensor(void) {
     allocation_calls = 0;
     fail_allocation_at = fail_at;
 
-    CHECK_STATUS(
-        T_create_tensor_by_data(&t, values, F32, shape, 2, cpu_device()),
-        TT_ERR_NO_MEMORY);
+    CHECK_STATUS(T_create_tensor(&t, values, F32, shape, 2, cpu_device()),
+                 TT_ERR_NO_MEMORY);
 
     CHECK(tensor_is_empty(&t));
 

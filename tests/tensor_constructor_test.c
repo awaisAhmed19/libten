@@ -12,7 +12,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../src/core/ten_tensor.c"
+#include "../include/ten/ten_tensor.h"
+#include "../src/internal/ten_tensor.h"
 
 #include "./tensor_checker.h"
 
@@ -28,7 +29,7 @@ static int test_rejects_null_output(void) {
   Tensor t = {0};
   const float data[] = {1.0f, 2.0f};
 
-  CHECK_STATUS(T_create_tensor_by_data(NULL, data, F32, shape, 1, cpu_device()),
+  CHECK_STATUS(T_create_tensor(NULL, data, F32, shape, 1, cpu_device()),
                TT_ERR_INVALID_ARG);
 
   CHECK(tensor_is_empty(&t));
@@ -42,7 +43,7 @@ static int test_rejects_invalid_rank(void) {
 
   CHECK(t != NULL);
 
-  CHECK_STATUS(T_create_tensor_by_data(t, data, F32, NULL, -1, cpu_device()),
+  CHECK_STATUS(T_create_tensor(t, data, F32, NULL, -1, cpu_device()),
                TT_ERR_INVALID_ARG);
 
   CHECK(tensor_is_empty(t));
@@ -65,8 +66,7 @@ static int test_constructs_and_copies_f32(void) {
 
   CHECK(t != NULL);
 
-  CHECK_STATUS(T_create_tensor_by_data(t, input, F32, shape, 2, cpu_device()),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(t, input, F32, shape, 2, cpu_device()), TT_OK);
 
   CHECK(t->rank == 2);
   CHECK(t->num_el == 4);
@@ -95,8 +95,8 @@ static int test_scalar(void) {
   Tensor *t = calloc(1, sizeof(*t));
 
   CHECK(t != NULL);
-  CHECK_STATUS(T_create_tensor_by_data(t, &scalar_value, F32, NULL, 0,
-                                       (Device){.devtype = CPU, .id = 0}),
+  CHECK_STATUS(T_create_tensor(t, &scalar_value, F32, NULL, 0,
+                               (Device){.devtype = CPU, .id = 0}),
                TT_OK);
 
   CHECK(t->rank == 0);
@@ -118,8 +118,7 @@ static int test_empty_tensor(void) {
 
   CHECK(t != NULL);
 
-  CHECK_STATUS(T_create_tensor_by_data(t, NULL, F32, shape, 3, cpu_device()),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(t, NULL, F32, shape, 3, cpu_device()), TT_OK);
 
   CHECK(t->rank == 3);
   CHECK(t->num_el == 0);

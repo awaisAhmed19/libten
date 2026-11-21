@@ -23,8 +23,7 @@ static int test_contiguous_tensor_view(void) {
   Tensor t = {0};
   TensorView tv = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&t, data, F32, shape, 2, cpu_device()),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&t, data, F32, shape, 2, cpu_device()), TT_OK);
 
   CHECK_STATUS(T_create_tensor_view(&tv, &t), TT_OK);
 
@@ -55,8 +54,7 @@ static int test_nonzero_offset(void) {
   Tensor t = {0};
   TensorView tv = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&t, data, F32, shape, 1, cpu_device()),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&t, data, F32, shape, 1, cpu_device()), TT_OK);
 
   /* Simulate a slice beginning at element 1. */
   t.offset = 1;
@@ -85,8 +83,7 @@ static int test_non_contiguous_tensor_view(void) {
   Tensor t = {0};
   TensorView tv = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&t, data, F32, shape, 2, cpu_device()),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&t, data, F32, shape, 2, cpu_device()), TT_OK);
 
   /*
    * Simulate a transpose.
@@ -137,8 +134,7 @@ static int test_scalar_view(void) {
   Tensor t = {0};
   TensorView tv = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&t, &value, F32, NULL, 0, cpu_device()),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&t, &value, F32, NULL, 0, cpu_device()), TT_OK);
 
   CHECK(t.rank == 0);
   CHECK(t.num_el == 1);
@@ -164,8 +160,7 @@ static int test_empty_tensor_view(void) {
   Tensor t = {0};
   TensorView tv = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&t, NULL, F32, shape, 3, cpu_device()),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&t, NULL, F32, shape, 3, cpu_device()), TT_OK);
 
   CHECK(t.num_el == 0);
   CHECK(t.storage->data == NULL);
@@ -197,8 +192,7 @@ static int test_invalid_arguments(void) {
   CHECK_STATUS(T_create_tensor_view(NULL, &t), TT_ERR_INVALID_ARG);
   CHECK_STATUS(T_create_tensor_view(&tv, NULL), TT_ERR_INVALID_ARG);
 
-  CHECK_STATUS(T_create_tensor_by_data(&t, data, F32, shape, 1, cpu_device()),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&t, data, F32, shape, 1, cpu_device()), TT_OK);
 
   /* Destination must be empty. */
   tv.rank = 1;
@@ -220,8 +214,7 @@ static int test_out_of_bounds_offset(void) {
   Tensor t = {0};
   TensorView tv = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&t, data, F32, shape, 1, cpu_device()),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&t, data, F32, shape, 1, cpu_device()), TT_OK);
 
   /* Storage contains two elements. Offset 2 is invalid for a nonempty view. */
   t.offset = 2;
@@ -247,8 +240,7 @@ static int test_null_storage_data(void) {
   Tensor t = {0};
   TensorView tv = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&t, data, F32, shape, 1, cpu_device()),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&t, data, F32, shape, 1, cpu_device()), TT_OK);
 
   void *original_data = t.storage->data;
 
@@ -277,8 +269,7 @@ static int test_view_does_not_retain_storage(void) {
   Tensor t = {0};
   TensorView tv = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&t, data, F32, shape, 1, cpu_device()),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&t, data, F32, shape, 1, cpu_device()), TT_OK);
 
   u32 original_ref_count = t.storage->ref_count;
 
@@ -303,9 +294,8 @@ static int test_contiguous_reshape_view(void) {
   Tensor src = {0};
   Tensor dst = {0};
 
-  CHECK_STATUS(
-      T_create_tensor_by_data(&src, data, F32, src_shape, 2, cpu_device()),
-      TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, data, F32, src_shape, 2, cpu_device()),
+               TT_OK);
 
   u32 original_ref_count = src.storage->ref_count;
   CHECK_STATUS(T_tensor_reshape_view(&dst, &src, dst_shape, 2), TT_OK);
@@ -343,9 +333,8 @@ static int test_reshape_view_preserves_offset(void) {
   Tensor src = {0};
   Tensor dst = {0};
 
-  CHECK_STATUS(
-      T_create_tensor_by_data(&src, data, F32, src_shape, 1, cpu_device()),
-      TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, data, F32, src_shape, 1, cpu_device()),
+               TT_OK);
 
   /* Represent the contiguous slice [20, 30, 40, 50]. */
   src.offset = 1;
@@ -382,9 +371,8 @@ static int test_reshape_view_rejects_non_contiguous_source(void) {
   Tensor src = {0};
   Tensor dst = {0};
 
-  CHECK_STATUS(
-      T_create_tensor_by_data(&src, data, F32, src_shape, 2, cpu_device()),
-      TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, data, F32, src_shape, 2, cpu_device()),
+               TT_OK);
 
   /* Metadata-only transpose: logical order becomes 1, 4, 2, 5, 3, 6. */
   src.shape[0] = 3;
@@ -419,9 +407,9 @@ static int test_scalar_and_empty_reshape_views(void) {
   Tensor empty = {0};
   Tensor empty_view = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&scalar, &scalar_value, F32, NULL, 0,
-                                       cpu_device()),
-               TT_OK);
+  CHECK_STATUS(
+      T_create_tensor(&scalar, &scalar_value, F32, NULL, 0, cpu_device()),
+      TT_OK);
   CHECK_STATUS(
       T_tensor_reshape_view(&scalar_view, &scalar, scalar_dst_shape, 2), TT_OK);
   CHECK(scalar_view.rank == 2);
@@ -429,9 +417,9 @@ static int test_scalar_and_empty_reshape_views(void) {
   CHECK(scalar_view.strides[0] == 1 && scalar_view.strides[1] == 1);
   CHECK(*(const float *)scalar_view.storage->data == scalar_value);
 
-  CHECK_STATUS(T_create_tensor_by_data(&empty, NULL, F32, empty_src_shape, 3,
-                                       cpu_device()),
-               TT_OK);
+  CHECK_STATUS(
+      T_create_tensor(&empty, NULL, F32, empty_src_shape, 3, cpu_device()),
+      TT_OK);
   CHECK_STATUS(T_tensor_reshape_view(&empty_view, &empty, empty_dst_shape, 2),
                TT_OK);
   CHECK(empty_view.num_el == 0);
@@ -457,9 +445,8 @@ static int test_reshape_view_rejects_element_count_mismatch(void) {
   Tensor src = {0};
   Tensor dst = {0};
 
-  CHECK_STATUS(
-      T_create_tensor_by_data(&src, data, F32, src_shape, 2, cpu_device()),
-      TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, data, F32, src_shape, 2, cpu_device()),
+               TT_OK);
   u32 original_ref_count = src.storage->ref_count;
 
   CHECK_STATUS(T_tensor_reshape_view(&dst, &src, dst_shape, 1),
@@ -484,9 +471,8 @@ static int test_reshape_view_rejects_invalid_source_bounds(void) {
   Tensor src = {0};
   Tensor dst = {0};
 
-  CHECK_STATUS(
-      T_create_tensor_by_data(&src, data, F32, src_shape, 1, cpu_device()),
-      TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, data, F32, src_shape, 1, cpu_device()),
+               TT_OK);
   src.offset = 1; /* Only one element remains, but the shape requires two. */
 
   CHECK_STATUS(T_tensor_reshape_view(&dst, &src, dst_shape, 1),
@@ -505,8 +491,7 @@ static int test_materialize_contiguous_tensor(void) {
   Tensor src = {0};
   Tensor dst = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 2, CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, data, F32, shape, 2, CPU_DEVICE), TT_OK);
 
   CHECK_STATUS(T_tensor_contiguous_materialize(&dst, &src), TT_OK);
 
@@ -538,8 +523,7 @@ static int test_materialize_transposed_tensor(void) {
   Tensor view = {0};
   Tensor dst = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 2, CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, data, F32, shape, 2, CPU_DEVICE), TT_OK);
 
   CHECK_STATUS(T_tensor_transpose(&view, &src, 0, 1), TT_OK);
 
@@ -576,8 +560,7 @@ static int test_materialize_nonzero_offset(void) {
   Tensor view = {0};
   Tensor dst = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 1, CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, data, F32, shape, 1, CPU_DEVICE), TT_OK);
 
   CHECK(T_storage_retain(src.storage));
 
@@ -614,8 +597,7 @@ static int test_materialize_independent_storage(void) {
   Tensor src = {0};
   Tensor dst = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 1, CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, data, F32, shape, 1, CPU_DEVICE), TT_OK);
 
   CHECK_STATUS(T_tensor_contiguous_materialize(&dst, &src), TT_OK);
 
@@ -643,9 +625,8 @@ static int test_materialize_scalar_and_empty(void) {
   Tensor src_empty = {0};
   Tensor dst_empty = {0};
 
-  CHECK_STATUS(
-      T_create_tensor_by_data(&src_scalar, &scalar, F32, NULL, 0, CPU_DEVICE),
-      TT_OK);
+  CHECK_STATUS(T_create_tensor(&src_scalar, &scalar, F32, NULL, 0, CPU_DEVICE),
+               TT_OK);
 
   CHECK_STATUS(T_tensor_contiguous_materialize(&dst_scalar, &src_scalar),
                TT_OK);
@@ -657,9 +638,9 @@ static int test_materialize_scalar_and_empty(void) {
 
   CHECK(*(const float *)dst_scalar.storage->data == 42.0f);
 
-  CHECK_STATUS(T_create_tensor_by_data(&src_empty, NULL, F32, empty_shape, 3,
-                                       CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(
+      T_create_tensor(&src_empty, NULL, F32, empty_shape, 3, CPU_DEVICE),
+      TT_OK);
 
   CHECK_STATUS(T_tensor_contiguous_materialize(&dst_empty, &src_empty), TT_OK);
 
@@ -683,8 +664,7 @@ static int create_slice_test_tensor(Tensor *src) {
 
   const i64 shape[] = {5, 5};
 
-  CHECK_STATUS(T_create_tensor_by_data(src, data, F32, shape, 2, CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(src, data, F32, shape, 2, CPU_DEVICE), TT_OK);
 
   return 0;
 }
@@ -1012,8 +992,7 @@ static int test_slice_empty_tensor(void) {
 
   const i64 shape[] = {2, 0, 4};
 
-  CHECK_STATUS(T_create_tensor_by_data(&src, NULL, F32, shape, 3, CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, NULL, F32, shape, 3, CPU_DEVICE), TT_OK);
 
   CHECK(src.num_el == 0);
 
@@ -1051,8 +1030,7 @@ static int test_transpose_view(void) {
   Tensor src = {0};
   Tensor dst = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 2, CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, data, F32, shape, 2, CPU_DEVICE), TT_OK);
   CHECK_STATUS(T_tensor_transpose(&dst, &src, 0, 1), TT_OK);
 
   CHECK(dst.storage == src.storage);
@@ -1082,8 +1060,7 @@ static int test_permute_view(void) {
 
   Tensor src = {0};
   Tensor dst = {0};
-  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 3, CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, data, F32, shape, 3, CPU_DEVICE), TT_OK);
   CHECK_STATUS(T_tensor_permute(&dst, &src, dims, 3), TT_OK);
 
   CHECK(dst.storage == src.storage);
@@ -1114,8 +1091,7 @@ static int test_squeeze_view(void) {
   Tensor src = {0};
   Tensor dst = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 4, CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, data, F32, shape, 4, CPU_DEVICE), TT_OK);
   CHECK_STATUS(T_tensor_squeeze(&dst, &src), TT_OK);
 
   CHECK(dst.storage == src.storage);
@@ -1135,8 +1111,7 @@ static int test_squeeze_dim_view(void) {
   Tensor src = {0};
   Tensor dst = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 4, CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, data, F32, shape, 4, CPU_DEVICE), TT_OK);
   CHECK_STATUS(T_tensor_squeeze_dim(&dst, &src, 2), TT_OK);
 
   CHECK(dst.storage == src.storage);
@@ -1156,15 +1131,13 @@ static int test_squeeze_scalar_and_empty_views(void) {
   Tensor empty = {0}, empty_view = {0};
 
   CHECK_STATUS(
-      T_create_tensor_by_data(&scalar, &scalar_value, F32, NULL, 0, CPU_DEVICE),
-      TT_OK);
+      T_create_tensor(&scalar, &scalar_value, F32, NULL, 0, CPU_DEVICE), TT_OK);
   CHECK_STATUS(T_tensor_squeeze(&scalar_view, &scalar), TT_OK);
   CHECK(scalar_view.rank == 0 && scalar_view.num_el == 1);
   CHECK(scalar_view.storage == scalar.storage);
 
-  CHECK_STATUS(
-      T_create_tensor_by_data(&empty, NULL, F32, empty_shape, 3, CPU_DEVICE),
-      TT_OK);
+  CHECK_STATUS(T_create_tensor(&empty, NULL, F32, empty_shape, 3, CPU_DEVICE),
+               TT_OK);
   CHECK_STATUS(T_tensor_squeeze(&empty_view, &empty), TT_OK);
   CHECK(empty_view.rank == 1 && empty_view.num_el == 0);
   CHECK(empty_view.shape[0] == 0);
@@ -1187,8 +1160,7 @@ static int test_unsqueeze_view_positions(void) {
   Tensor src = {0};
   Tensor before = {0}, middle = {0}, after = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 2, CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, data, F32, shape, 2, CPU_DEVICE), TT_OK);
 
   CHECK_STATUS(T_tensor_unsqueeze(&before, &src, 0), TT_OK);
   CHECK(before.rank == 3 && before.shape[0] == 1 && before.shape[1] == 2 &&
@@ -1225,14 +1197,12 @@ static int test_unsqueeze_scalar_and_noncontiguous(void) {
   Tensor src = {0}, transposed = {0}, expanded = {0};
 
   CHECK_STATUS(
-      T_create_tensor_by_data(&scalar, &scalar_value, F32, NULL, 0, CPU_DEVICE),
-      TT_OK);
+      T_create_tensor(&scalar, &scalar_value, F32, NULL, 0, CPU_DEVICE), TT_OK);
   CHECK_STATUS(T_tensor_unsqueeze(&scalar_view, &scalar, 0), TT_OK);
   CHECK(scalar_view.rank == 1 && scalar_view.shape[0] == 1);
   CHECK(scalar_view.strides[0] == 1);
 
-  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 2, CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, data, F32, shape, 2, CPU_DEVICE), TT_OK);
   CHECK_STATUS(T_tensor_transpose(&transposed, &src, 0, 1), TT_OK);
   CHECK_STATUS(T_tensor_unsqueeze(&expanded, &transposed, 1), TT_OK);
   CHECK(expanded.shape[0] == 3 && expanded.shape[1] == 1 &&
@@ -1265,8 +1235,7 @@ static int test_transform_view_invalid_arguments(void) {
   CHECK_STATUS(T_tensor_squeeze_dim(&dst, NULL, 0), TT_ERR_INVALID_ARG);
   CHECK_STATUS(T_tensor_unsqueeze(&dst, NULL, 0), TT_ERR_INVALID_ARG);
 
-  CHECK_STATUS(T_create_tensor_by_data(&src, data, F32, shape, 2, CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, data, F32, shape, 2, CPU_DEVICE), TT_OK);
 
   /* A non-NULL tensor with missing storage must fail without dereferencing it.
    */
@@ -1305,8 +1274,7 @@ static int test_transform_views_accept_empty_tensor(void) {
   Tensor src = {0}, transposed = {0}, permuted = {0}, squeezed = {0};
   Tensor expanded = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&src, NULL, F32, shape, 3, CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&src, NULL, F32, shape, 3, CPU_DEVICE), TT_OK);
   CHECK_STATUS(T_tensor_transpose(&transposed, &src, 0, 2), TT_OK);
   CHECK(transposed.num_el == 0 && transposed.storage->data == NULL);
   CHECK(transposed.shape[0] == 4 && transposed.shape[1] == 0 &&

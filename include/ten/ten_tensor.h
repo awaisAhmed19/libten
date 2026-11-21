@@ -15,8 +15,27 @@ extern "C" {
 #define TT_MAX_RANK 8
 
 typedef struct Tensor Tensor;
-typedef struct TensorStorage TensorStorage;
 typedef struct TensorView TensorView;
+
+typedef struct TensorStorage TensorStorage;
+
+typedef struct Tensor {
+  TensorStorage *storage;
+
+  i32 rank;
+  i64 *shape;
+  i64 *strides;
+
+  i64 offset;
+  i64 num_el;
+} Tensor;
+typedef struct TensorView {
+  void *data;
+  i32 rank;
+  DataType dtype;
+  i64 shape[TT_MAX_RANK];
+  i64 strides[TT_MAX_RANK];
+} TensorView;
 
 /*
  * 2. Construction
@@ -35,9 +54,9 @@ typedef struct TensorView TensorView;
  * On success, t owns its storage reference and metadata.
  * On failure, t remains empty.
  */
-extern Ten_Status T_create_tensor_by_data(Tensor *t, const void *input_data,
-                                          DataType dtype, const i64 *shape,
-                                          i32 rank, Device device);
+extern Ten_Status T_create_tensor(Tensor *t, const void *input_data,
+                                  DataType dtype, const i64 *shape, i32 rank,
+                                  Device device);
 
 /*
  * Creates a tensor sharing an existing storage allocation.
@@ -86,7 +105,8 @@ extern void T_destroy_tensor(Tensor *t);
 
 /* Returns the tensor rank, or -1 for an invalid tensor. */
 extern i32 T_get_rank(const Tensor *t);
-
+extern bool T_is_ranks_valid(const i32 ranks);
+extern bool T_is_shape_input_valid(const i64 *input_shape, i32 ranks);
 /*
  * Copies the tensor shape into caller-provided storage.
  *
@@ -143,7 +163,7 @@ extern Ten_Status T_tensor_is_contiguous(const Tensor *t, bool *out);
  * The pointer does not imply that the tensor is contiguous.
  * Check T_tensor_is_contiguous() before flat iteration.
  */
-extern Ten_Status T_data(const Tensor *src, const void **data);
+extern Ten_Status T_data(const Tensor *src, void **data);
 
 /*
  * Returns a const pointer to the first logical element
@@ -153,7 +173,7 @@ extern Ten_Status T_data(const Tensor *src, const void **data);
  * Const access does not guarantee that another alias
  * cannot modify the underlying storage.
  */
-extern const void *T_const_data(const Tensor *t);
+extern Ten_Status T_const_data(const Tensor *t, const void **data);
 
 /*
  * 7. Data movement

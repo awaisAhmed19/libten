@@ -11,7 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../src/core/ten_tensor.c"
+#include "../include/ten/ten_tensor.h"
+#include "../src/internal/ten_tensor.h"
 
 #include "./tensor_checker.h"
 
@@ -114,8 +115,7 @@ static int test_get_scalar_shape(void) {
   const float value = 42.0f;
   Tensor t = {0};
 
-  CHECK_STATUS(T_create_tensor_by_data(&t, &value, F32, NULL, 0, CPU_DEVICE),
-               TT_OK);
+  CHECK_STATUS(T_create_tensor(&t, &value, F32, NULL, 0, CPU_DEVICE), TT_OK);
 
   CHECK(T_get_shape(&t, NULL, 0));
 
