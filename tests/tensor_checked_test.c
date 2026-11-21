@@ -11,7 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef TEN_TEST_HAS_CUDA
+#if TEN_TEST_HAS_CUDA
 #include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
 #endif
