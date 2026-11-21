@@ -135,7 +135,8 @@ static int test_tensor_reshape_success(void) {
   CHECK(dst.shape[1] == 2);
   CHECK(dst.num_el == 6);
 
-  const void *raw_data = NULL;
+  void *raw_data = NULL;
+
   CHECK_STATUS(T_data(&dst, &raw_data), TT_OK);
 
   const float *result = (const float *)raw_data;
