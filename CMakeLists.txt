@@ -185,10 +185,6 @@ if(BUILD_TESTING)
 
     ten_configure_test(${target_name})
 
-    if(TEN_CUDA_AVAILABLE)
-      target_compile_definitions(${target_name} PRIVATE TEN_TEST_HAS_CUDA=1)
-    endif()
-
     add_test(NAME ${test_name} COMMAND ${target_name})
   endfunction()
 
@@ -199,6 +195,13 @@ if(BUILD_TESTING)
   ten_add_test(tensor tensor_test.c)
   ten_add_test(checked tensor_checked_test.c)
   ten_add_test(views tensor_views_test.c)
+
+  # * The checked test directly uses the CUDA runtime when CUDA is enabled -
+
+  if(TEN_CUDA_AVAILABLE)
+    target_compile_definitions(ten_checked_tests PRIVATE TEN_TEST_HAS_CUDA=1)
+    target_link_libraries(ten_checked_tests PRIVATE CUDA::cudart)
+  endif()
 
   # * CUDA memory and copy tests -
 
