@@ -488,7 +488,7 @@ Ten_Status T_validate_new_tensor(const Tensor *t, DataType dtype,
     return (Ten_Status){TT_ERR_DTYPE_UNSUPPORTED, "unsupported dtype"};
 
   if (T_validate_device(dev).stype != TT_OK) {
-    return (Ten_Status){TT_ERR_DEVICE_MISMATCH, "unsupported device type"};
+    return (Ten_Status){TT_ERR_UNSUPPORTED, "unsupported device type"};
   }
   return (Ten_Status){TT_OK, "success"};
 }

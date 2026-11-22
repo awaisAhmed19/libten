@@ -230,16 +230,15 @@ static int test_unsupported_device_status(void) {
 
   Device device = {.devtype = CUDA, .id = 0};
 
-  CHECK_STATUS(T_create_tensor(&t, values, F32, shape, 1, device), TT_OK);
+  CHECK_STATUS(T_create_tensor(&t, values, F32, shape, 1, device),
+               TT_ERR_UNSUPPORTED);
 
   CHECK(tensor_is_empty(&t));
 
 #endif
 
   return 0;
-}
-
-/*  */
+} /*  */
 /* Allocation failure tests                                   */
 /*  */
 
