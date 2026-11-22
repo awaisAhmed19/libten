@@ -302,24 +302,6 @@ static Ten_Status storage_allocate(void **out, Device device, size_t n_bytes) {
 
 Ten_Status storage_copy(void *dst, Device dst_device, const void *src,
                         Device src_device, size_t n_bytes) {
-  if (n_bytes == 0)
-    return status_ok();
-
-  if (dst == NULL || src == NULL)
-    return status_error(TT_ERR_INVALID_ARG,
-                        "source or destination pointer is NULL");
-
-  if (dst_device.devtype == CPU && src_device.devtype == CPU) {
-    const Ten_Backend *backend = T_get_backend(dst_device);
-
-    if (backend == NULL || backend->memory.copy == NULL)
-      return status_error(TT_ERR_INVALID_STATE, "CPU backend copy unavailable");
-
-    return backend->memory.copy(dst, src, n_bytes, TEN_COPY_HOST_TO_HOST);
-  }
-
-  Ten_CopyKind kind;
-  Device backend_device;
   Ten_Status status = T_validate_device(dst_device);
   if (status.stype != TT_OK)
     return status;
@@ -327,11 +309,21 @@ Ten_Status storage_copy(void *dst, Device dst_device, const void *src,
   status = T_validate_device(src_device);
   if (status.stype != TT_OK)
     return status;
-  // if (src_device.devtype == CPU && dst_device.devtype == CPU) {
-  //   kind = TEN_COPY_HOST_TO_HOST;
-  //   backend_device = dst_device;
-  // } else
-  if (src_device.devtype == CPU && dst_device.devtype == CUDA) {
+
+  if (n_bytes == 0)
+    return status_ok();
+
+  if (dst == NULL || src == NULL)
+    return status_error(TT_ERR_INVALID_ARG,
+                        "source or destination pointer is NULL");
+
+  Ten_CopyKind kind;
+  Device backend_device;
+
+  if (src_device.devtype == CPU && dst_device.devtype == CPU) {
+    kind = TEN_COPY_HOST_TO_HOST;
+    backend_device = dst_device;
+  } else if (src_device.devtype == CPU && dst_device.devtype == CUDA) {
     kind = TEN_COPY_HOST_TO_DEVICE;
     backend_device = dst_device;
   } else if (src_device.devtype == CUDA && dst_device.devtype == CPU) {
@@ -341,6 +333,7 @@ Ten_Status storage_copy(void *dst, Device dst_device, const void *src,
     if (src_device.id != dst_device.id)
       return status_error(TT_ERR_UNSUPPORTED,
                           "cross-device CUDA copies are not supported");
+
     kind = TEN_COPY_DEVICE_TO_DEVICE;
     backend_device = dst_device;
   } else {
@@ -348,6 +341,7 @@ Ten_Status storage_copy(void *dst, Device dst_device, const void *src,
   }
 
   const Ten_Backend *backend = T_get_backend(backend_device);
+
   if (backend == NULL)
     return status_error(TT_ERR_UNSUPPORTED,
                         "memory copy backend is unavailable");
@@ -807,8 +801,7 @@ Ten_Status T_create_tensor_storage(TensorStorage **ts, const void *input_data,
   if (*ts != NULL)
     return status_error(TT_ERR_INVALID_STATE,
                         "storage pointer is already initialized");
-  if (n_bytes == 0)
-    return status_ok();
+
   if (n_bytes > 0 && input_data == NULL)
     return status_error(TT_ERR_INVALID_ARG, "input data is NULL");
 
@@ -817,13 +810,17 @@ Ten_Status T_create_tensor_storage(TensorStorage **ts, const void *input_data,
     return status;
 
   status = T_validate_device(storage_device);
-
   if (status.stype != TT_OK)
     return status;
+
+  /* Zero-byte storage is still a real storage object (data == NULL,
+   * n_bytes == 0, ref_count == 1) so views and clones can retain it. */
   status = T_create_empty_storage(ts, dtype, storage_device, n_bytes);
-
   if (status.stype != TT_OK)
     return status;
+
+  if (n_bytes == 0)
+    return status_ok();
 
   status = storage_copy((*ts)->data, storage_device, input_data, input_device,
                         n_bytes);

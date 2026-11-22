@@ -210,17 +210,15 @@ if(BUILD_TESTING)
 
     function(ten_add_cuda_test test_name source_file)
       set(target_name "ten_${test_name}_tests")
-
       add_executable(${target_name} "tests/cuda/${source_file}")
-
       ten_configure_test(${target_name})
 
       target_include_directories(
         ${target_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/cuda
                                ${CUDAToolkit_INCLUDE_DIRS})
 
+      target_compile_definitions(${target_name} PRIVATE TEN_TEST_HAS_CUDA=1)
       target_link_libraries(${target_name} PRIVATE CUDA::cudart)
-
       add_test(NAME ${test_name} COMMAND ${target_name})
 
       set_tests_properties(${test_name} PROPERTIES SKIP_RETURN_CODE 77)

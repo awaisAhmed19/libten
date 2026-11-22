@@ -5,6 +5,7 @@
  * for those two files so CPU backend allocation/copy can be forced to fail
  * and live allocations can be counted. CUDA still uses the real backend.
  */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,10 +15,12 @@
 #include "internal/ten_backend.h"
 #include "ten/ten_status.h"
 #include "ten/ten_tensor.h"
+
 #ifdef TEN_TEST_HAS_CUDA
 #include <cuda_runtime.h>
-#include <cuda_runtime_api.h>
 #endif
+
+#include "cuda_test_common.h"
 
 const Ten_Backend *test_get_backend(Device device);
 
@@ -94,15 +97,25 @@ static void reset_injection(void) {
 }
 
 static Device cpu_device(void) { return (Device){.devtype = CPU, .id = 0}; }
+
 static Device cuda_device(void) { return (Device){.devtype = CUDA, .id = 0}; }
 
-static int tensor_is_empty(const Tensor *t) {
-  return t != NULL && t->storage == NULL && t->shape == NULL &&
-         t->strides == NULL && t->rank == 0 && t->offset == 0 && t->num_el == 0;
+static int tensor_is_empty(const Tensor *tensor) {
+  return tensor != NULL && tensor->storage == NULL && tensor->shape == NULL &&
+         tensor->strides == NULL && tensor->rank == 0 && tensor->offset == 0 &&
+         tensor->num_el == 0;
+}
+
+static int check_no_live_allocations(void) {
+  if (live_allocs == 0)
+    return 0;
+
+  fprintf(stderr, "FAIL: expected zero live allocations, got %ld\n",
+          live_allocs);
+  return 1;
 }
 
 /* Shared success-case runner for CPU and CUDA. */
-
 typedef enum { CASE_CONTIGUOUS, CASE_TRANSPOSED, CASE_SLICED } CaseKind;
 
 static int run_case(Device dev, CaseKind kind) {
@@ -110,16 +123,23 @@ static int run_case(Device dev, CaseKind kind) {
   static const float expected_transposed[] = {1, 4, 2, 5, 3, 6};
   static const float expected_sliced[] = {0, 2, 4, 6, 8, 10};
 
-  float data[12];
-  i64 shape[2];
-  i64 out_shape[2];
-  i64 out_strides[2];
-  const float *expected;
-  i64 count;
+  float data[12] = {0};
+  i64 shape[2] = {0};
+  i64 out_shape[2] = {0};
+  i64 out_strides[2] = {0};
+  const float *expected = NULL;
+  i64 count = 0;
+
+  Tensor src = {0};
+  Tensor view = {0};
+  Tensor dst = {0};
+  const Tensor *source = &src;
+  int result = 0;
 
   if (kind == CASE_SLICED) {
     for (i32 i = 0; i < 12; ++i)
       data[i] = (float)i;
+
     shape[0] = 3;
     shape[1] = 4;
     out_shape[0] = 3;
@@ -131,6 +151,7 @@ static int run_case(Device dev, CaseKind kind) {
   } else {
     for (i32 i = 0; i < 6; ++i)
       data[i] = (float)(i + 1);
+
     shape[0] = 2;
     shape[1] = 3;
     count = 6;
@@ -150,99 +171,124 @@ static int run_case(Device dev, CaseKind kind) {
     }
   }
 
-  Tensor src = {0};
-  Tensor view = {0};
-  Tensor dst = {0};
-  const Tensor *source = &src;
-
-  CHECK_STATUS(T_create_tensor(&src, data, F32, shape, 2, dev), TT_OK);
+  CUDA_TEST_STATUS(T_create_tensor(&src, data, F32, shape, 2, dev), TT_OK);
 
   if (kind == CASE_TRANSPOSED) {
-    CHECK_STATUS(T_tensor_transpose(&view, &src, 0, 1), TT_OK);
+    CUDA_TEST_STATUS(T_tensor_transpose(&view, &src, 0, 1), TT_OK);
     source = &view;
   } else if (kind == CASE_SLICED) {
-    CHECK_STATUS(T_tensor_slice(&view, &src, 1, 0, 4, 2), TT_OK);
+    CUDA_TEST_STATUS(T_tensor_slice(&view, &src, 1, 0, 4, 2), TT_OK);
     source = &view;
   }
 
   if (kind != CASE_CONTIGUOUS) {
     bool contiguous = true;
-    CHECK_STATUS(T_tensor_is_contiguous(source, &contiguous), TT_OK);
-    CHECK(!contiguous);
+    CUDA_TEST_STATUS(T_tensor_is_contiguous(source, &contiguous), TT_OK);
+    CUDA_TEST_CHECK(!contiguous);
   }
 
-  CHECK_STATUS(T_tensor_contiguous_materialize(&dst, source), TT_OK);
+  CUDA_TEST_STATUS(T_tensor_contiguous_materialize(&dst, source), TT_OK);
 
-  CHECK(dst.storage != NULL && dst.storage != source->storage);
-  CHECK(dst.storage->data != src.storage->data);
-  CHECK(dst.rank == 2);
-  CHECK(dst.num_el == count);
-  CHECK(dst.offset == 0);
-  CHECK(dst.shape[0] == out_shape[0] && dst.shape[1] == out_shape[1]);
-  CHECK(dst.strides[0] == out_strides[0] && dst.strides[1] == out_strides[1]);
+  CUDA_TEST_CHECK(dst.storage != NULL && dst.storage != source->storage);
+  CUDA_TEST_CHECK(dst.storage->data != src.storage->data);
+  CUDA_TEST_CHECK(dst.rank == 2);
+  CUDA_TEST_CHECK(dst.num_el == count);
+  CUDA_TEST_CHECK(dst.offset == 0);
+  CUDA_TEST_CHECK(dst.shape[0] == out_shape[0] && dst.shape[1] == out_shape[1]);
+  CUDA_TEST_CHECK(dst.strides[0] == out_strides[0] &&
+                  dst.strides[1] == out_strides[1]);
 
   bool contiguous = false;
-  CHECK_STATUS(T_tensor_is_contiguous(&dst, &contiguous), TT_OK);
-  CHECK(contiguous);
+  CUDA_TEST_STATUS(T_tensor_is_contiguous(&dst, &contiguous), TT_OK);
+  CUDA_TEST_CHECK(contiguous);
 
   /* The output must remain on the source device. */
   Device out_device;
-  CHECK(T_get_device(&dst, &out_device));
-  CHECK(out_device.devtype == dev.devtype && out_device.id == dev.id);
+  CUDA_TEST_CHECK(T_get_device(&dst, &out_device));
+  CUDA_TEST_CHECK(out_device.devtype == dev.devtype && out_device.id == dev.id);
 
   /* Read back through the backend; never dereference device memory. */
   void *ptr = NULL;
   Device ptr_device;
   float host[12] = {0};
 
-  CHECK_STATUS(T_device_data(&dst, &ptr, &ptr_device), TT_OK);
-  CHECK(ptr != NULL);
-  CHECK(ptr_device.devtype == dev.devtype && ptr_device.id == dev.id);
-  CHECK_STATUS(storage_copy(host, cpu_device(), ptr, ptr_device,
-                            (size_t)count * sizeof(float)),
-               TT_OK);
-  CHECK(memcmp(host, expected, (size_t)count * sizeof(float)) == 0);
+  CUDA_TEST_STATUS(T_device_data(&dst, &ptr, &ptr_device), TT_OK);
+  CUDA_TEST_CHECK(ptr != NULL);
+  CUDA_TEST_CHECK(ptr_device.devtype == dev.devtype && ptr_device.id == dev.id);
+  CUDA_TEST_STATUS(storage_copy(host, cpu_device(), ptr, ptr_device,
+                                (size_t)count * sizeof(float)),
+                   TT_OK);
+  CUDA_TEST_CHECK(memcmp(host, expected, (size_t)count * sizeof(float)) == 0);
 
+  CUDA_TEST_CHECK(!tensor_is_empty(&dst));
+
+cleanup:
   T_destroy_tensor(&dst);
   T_destroy_tensor(&view);
   T_destroy_tensor(&src);
-  CHECK(tensor_is_empty(&dst));
-  return 0;
+
+  if (!tensor_is_empty(&dst)) {
+    fprintf(stderr, "FAIL: destination was not empty after cleanup\n");
+    result = 1;
+  }
+
+  return result;
 }
 
 static int test_cpu_contiguous(void) {
-  reset_injection();
-  CHECK(run_case(cpu_device(), CASE_CONTIGUOUS) == 0);
-
-  /* Mutating the output must not change the source. */
   const i64 shape[] = {2, 3};
   const float data[] = {1, 2, 3, 4, 5, 6};
+
   Tensor src = {0};
   Tensor dst = {0};
+  int result = 0;
 
-  CHECK_STATUS(T_create_tensor(&src, data, F32, shape, 2, cpu_device()), TT_OK);
-  CHECK_STATUS(T_tensor_contiguous_materialize(&dst, &src), TT_OK);
+  reset_injection();
+
+  CUDA_TEST_CHECK(run_case(cpu_device(), CASE_CONTIGUOUS) == 0);
+
+  /* Mutating the output must not change the source. */
+  CUDA_TEST_STATUS(T_create_tensor(&src, data, F32, shape, 2, cpu_device()),
+                   TT_OK);
+  CUDA_TEST_STATUS(T_tensor_contiguous_materialize(&dst, &src), TT_OK);
+
   ((float *)dst.storage->data)[0] = 99.0f;
-  CHECK(((float *)src.storage->data)[0] == 1.0f);
+  CUDA_TEST_CHECK(((float *)src.storage->data)[0] == 1.0f);
 
+cleanup:
   T_destroy_tensor(&dst);
   T_destroy_tensor(&src);
-  CHECK(live_allocs == 0);
-  return 0;
+
+  if (check_no_live_allocations() != 0)
+    result = 1;
+
+  return result;
 }
 
 static int test_cpu_transposed(void) {
+  int result = 0;
+
   reset_injection();
-  CHECK(run_case(cpu_device(), CASE_TRANSPOSED) == 0);
-  CHECK(live_allocs == 0);
-  return 0;
+  CUDA_TEST_CHECK(run_case(cpu_device(), CASE_TRANSPOSED) == 0);
+
+cleanup:
+  if (check_no_live_allocations() != 0)
+    result = 1;
+
+  return result;
 }
 
 static int test_cpu_sliced(void) {
+  int result = 0;
+
   reset_injection();
-  CHECK(run_case(cpu_device(), CASE_SLICED) == 0);
-  CHECK(live_allocs == 0);
-  return 0;
+  CUDA_TEST_CHECK(run_case(cpu_device(), CASE_SLICED) == 0);
+
+cleanup:
+  if (check_no_live_allocations() != 0)
+    result = 1;
+
+  return result;
 }
 
 #ifdef TEN_TEST_HAS_CUDA
@@ -273,8 +319,7 @@ static int run_cuda_case(CaseKind kind, const char *name) {
   }
 
   reset_injection();
-  CHECK(run_case(cuda_device(), kind) == 0);
-  return 0;
+  return run_case(cuda_device(), kind);
 #else
   (void)kind;
   fprintf(stderr, "[SKIP] %s: CUDA not compiled\n", name);
@@ -298,149 +343,209 @@ static int test_empty_tensor(void) {
   const i64 shape[] = {2, 0, 3};
   Tensor src = {0};
   Tensor dst = {0};
+  int result = 0;
 
   reset_injection();
 
-  CHECK_STATUS(T_create_tensor(&src, NULL, F32, shape, 3, cpu_device()), TT_OK);
+  CUDA_TEST_STATUS(T_create_tensor(&src, NULL, F32, shape, 3, cpu_device()),
+                   TT_OK);
 
   const long copies_before = copy_calls;
 
-  CHECK_STATUS(T_tensor_contiguous_materialize(&dst, &src), TT_OK);
+  CUDA_TEST_STATUS(T_tensor_contiguous_materialize(&dst, &src), TT_OK);
 
-  CHECK(dst.rank == 3);
-  CHECK(dst.num_el == 0);
-  CHECK(dst.offset == 0);
-  CHECK(dst.shape[0] == 2 && dst.shape[1] == 0 && dst.shape[2] == 3);
-  CHECK(dst.strides[0] == 0 && dst.strides[1] == 3 && dst.strides[2] == 1);
-  CHECK(dst.storage != NULL && dst.storage != src.storage);
-  CHECK(dst.storage->n_bytes == 0);
-  CHECK(dst.storage->data == NULL);
+  CUDA_TEST_CHECK(dst.rank == 3);
+  CUDA_TEST_CHECK(dst.num_el == 0);
+  CUDA_TEST_CHECK(dst.offset == 0);
+  CUDA_TEST_CHECK(dst.shape[0] == 2 && dst.shape[1] == 0 && dst.shape[2] == 3);
+  CUDA_TEST_CHECK(dst.strides[0] == 0 && dst.strides[1] == 3 &&
+                  dst.strides[2] == 1);
+  CUDA_TEST_CHECK(dst.storage != NULL && dst.storage != src.storage);
+  CUDA_TEST_CHECK(dst.storage->n_bytes == 0);
+  CUDA_TEST_CHECK(dst.storage->data == NULL);
 
   bool contiguous = false;
-  CHECK_STATUS(T_tensor_is_contiguous(&dst, &contiguous), TT_OK);
-  CHECK(contiguous);
+  CUDA_TEST_STATUS(T_tensor_is_contiguous(&dst, &contiguous), TT_OK);
+  CUDA_TEST_CHECK(contiguous);
 
   /* No data transfer for a zero-element tensor. */
-  CHECK(copy_calls == copies_before);
+  CUDA_TEST_CHECK(copy_calls == copies_before);
 
+cleanup:
   T_destroy_tensor(&dst);
   T_destroy_tensor(&src);
-  CHECK(live_allocs == 0);
-  return 0;
+
+  if (check_no_live_allocations() != 0)
+    result = 1;
+
+  return result;
 }
 
 static int test_invalid_cuda_device_id(void) {
   const i64 shape[] = {2, 3};
   const float data[] = {1, 2, 3, 4, 5, 6};
+
   Tensor src = {0};
   Tensor dst = {0};
+  int result = 0;
+  int device_was_retagged = 0;
 
   reset_injection();
 
-  CHECK_STATUS(T_create_tensor(&src, data, F32, shape, 2, cpu_device()), TT_OK);
+  CUDA_TEST_STATUS(T_create_tensor(&src, data, F32, shape, 2, cpu_device()),
+                   TT_OK);
 
   /*
    * Retag the CPU allocation with an invalid CUDA ID. Validation must fail
-   * before any backend access. id == 1 on a single-GPU machine is only
-   * rejected once AT02 adds the Device.id check, so it is not tested here.
+   * before backend access. The original device is restored before destruction.
    */
   src.storage->device = (Device){.devtype = CUDA, .id = -1};
+  device_was_retagged = 1;
 
-  CHECK_STATUS(T_tensor_contiguous_materialize(&dst, &src), TT_ERR_INVALID_ARG);
-  CHECK(tensor_is_empty(&dst));
+  CUDA_TEST_STATUS(T_tensor_contiguous_materialize(&dst, &src),
+                   TT_ERR_INVALID_ARG);
+  CUDA_TEST_CHECK(tensor_is_empty(&dst));
 
-  src.storage->device = cpu_device();
+cleanup:
+  if (device_was_retagged && src.storage != NULL)
+    src.storage->device = cpu_device();
+
+  T_destroy_tensor(&dst);
   T_destroy_tensor(&src);
-  CHECK(live_allocs == 0);
-  return 0;
+
+  if (check_no_live_allocations() != 0)
+    result = 1;
+
+  return result;
 }
 
 static int test_null_source_data(void) {
   const i64 shape[] = {2, 3};
   const float data[] = {1, 2, 3, 4, 5, 6};
+
   Tensor src = {0};
   Tensor dst = {0};
+  void *original_data = NULL;
+  int result = 0;
+  int source_data_was_cleared = 0;
 
   reset_injection();
 
-  CHECK_STATUS(T_create_tensor(&src, data, F32, shape, 2, cpu_device()), TT_OK);
+  CUDA_TEST_STATUS(T_create_tensor(&src, data, F32, shape, 2, cpu_device()),
+                   TT_OK);
 
-  void *original = src.storage->data;
+  original_data = src.storage->data;
   src.storage->data = NULL;
+  source_data_was_cleared = 1;
 
-  CHECK_STATUS(T_tensor_contiguous_materialize(&dst, &src),
-               TT_ERR_OUT_OF_RANGE);
-  CHECK(tensor_is_empty(&dst));
+  CUDA_TEST_STATUS(T_tensor_contiguous_materialize(&dst, &src),
+                   TT_ERR_OUT_OF_RANGE);
+  CUDA_TEST_CHECK(tensor_is_empty(&dst));
 
-  src.storage->data = original;
+cleanup:
+  if (source_data_was_cleared && src.storage != NULL)
+    src.storage->data = original_data;
+
+  T_destroy_tensor(&dst);
   T_destroy_tensor(&src);
-  CHECK(live_allocs == 0);
-  return 0;
+
+  if (check_no_live_allocations() != 0)
+    result = 1;
+
+  return result;
 }
 
 static int test_destination_allocation_failure(void) {
   const i64 shape[] = {2, 3};
   const float data[] = {1, 2, 3, 4, 5, 6};
+
   Tensor src = {0};
   Tensor dst = {0};
+  int result = 0;
 
   reset_injection();
 
-  CHECK_STATUS(T_create_tensor(&src, data, F32, shape, 2, cpu_device()), TT_OK);
+  CUDA_TEST_STATUS(T_create_tensor(&src, data, F32, shape, 2, cpu_device()),
+                   TT_OK);
+
   const long baseline = live_allocs;
-  CHECK(baseline == 1);
+  CUDA_TEST_CHECK(baseline == 1);
 
   fail_alloc = 1;
-  CHECK_STATUS(T_tensor_contiguous_materialize(&dst, &src), TT_ERR_NO_MEMORY);
+  CUDA_TEST_STATUS(T_tensor_contiguous_materialize(&dst, &src),
+                   TT_ERR_NO_MEMORY);
   fail_alloc = 0;
 
-  CHECK(tensor_is_empty(&dst));
-  CHECK(live_allocs == baseline);
+  CUDA_TEST_CHECK(tensor_is_empty(&dst));
+  CUDA_TEST_CHECK(live_allocs == baseline);
 
   /* The source is untouched and still usable. */
-  CHECK(memcmp(src.storage->data, data, sizeof(data)) == 0);
+  CUDA_TEST_CHECK(memcmp(src.storage->data, data, sizeof(data)) == 0);
 
+cleanup:
+  fail_alloc = 0;
+
+  T_destroy_tensor(&dst);
   T_destroy_tensor(&src);
-  CHECK(live_allocs == 0);
-  return 0;
+
+  if (check_no_live_allocations() != 0)
+    result = 1;
+
+  return result;
 }
 
 static int test_copy_failure(void) {
   const i64 shape[] = {2, 3};
   const float data[] = {1, 2, 3, 4, 5, 6};
+
   Tensor src = {0};
-  Tensor view = {0};
   Tensor dst = {0};
+  int result = 0;
 
   reset_injection();
 
-  CHECK_STATUS(T_create_tensor(&src, data, F32, shape, 2, cpu_device()), TT_OK);
-  CHECK_STATUS(T_tensor_transpose(&view, &src, 0, 1), TT_OK);
+  CUDA_TEST_STATUS(T_create_tensor(&src, data, F32, shape, 2, cpu_device()),
+                   TT_OK);
+
   const long baseline = live_allocs;
+  const long copies_before = copy_calls;
 
   /*
-   * Materialize does not call T_copy_tensor_data(); its only backend copy is
-   * the final transfer into the destination storage.
+   * Contiguous materialization uses storage_copy(), which dispatches through
+   * the fault-injecting CPU backend.
    */
   fail_copy = 1;
-  CHECK_STATUS(T_tensor_contiguous_materialize(&dst, &view), TT_ERR_INTERNAL);
+
+  CUDA_TEST_STATUS(T_tensor_contiguous_materialize(&dst, &src),
+                   TT_ERR_INTERNAL);
   fail_copy = 0;
 
-  CHECK(tensor_is_empty(&dst));
-  CHECK(live_allocs == baseline);
+  CUDA_TEST_CHECK(copy_calls > copies_before);
+  CUDA_TEST_CHECK(tensor_is_empty(&dst));
+  CUDA_TEST_CHECK(live_allocs == baseline);
 
-  T_destroy_tensor(&view);
+  /* Source remains valid and unchanged. */
+  CUDA_TEST_CHECK(memcmp(src.storage->data, data, sizeof(data)) == 0);
+
+cleanup:
+  fail_copy = 0;
+
+  T_destroy_tensor(&dst);
   T_destroy_tensor(&src);
-  CHECK(live_allocs == 0);
-  return 0;
+
+  if (check_no_live_allocations() != 0)
+    result = 1;
+
+  return result;
 }
 
 int main(void) {
-  if (test_cpu_contiguous() || test_cpu_transposed() || test_cpu_sliced() ||
-      test_cuda_contiguous() || test_cuda_transposed() || test_cuda_sliced() ||
-      test_empty_tensor() || test_invalid_cuda_device_id() ||
-      test_null_source_data() || test_destination_allocation_failure() ||
-      test_copy_failure()) {
+  if (test_cpu_contiguous() != 0 || test_cpu_transposed() != 0 ||
+      test_cpu_sliced() != 0 || test_cuda_contiguous() != 0 ||
+      test_cuda_transposed() != 0 || test_cuda_sliced() != 0 ||
+      test_empty_tensor() != 0 || test_invalid_cuda_device_id() != 0 ||
+      test_null_source_data() != 0 ||
+      test_destination_allocation_failure() != 0 || test_copy_failure() != 0) {
     return EXIT_FAILURE;
   }
 
