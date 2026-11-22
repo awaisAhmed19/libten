@@ -109,6 +109,7 @@ extern void T_destroy_tensor(Tensor *t);
 extern i32 T_get_rank(const Tensor *t);
 extern bool T_is_ranks_valid(const i32 ranks);
 extern bool T_is_shape_input_valid(const i64 *input_shape, i32 ranks);
+extern Ten_Status T_validate_device(Device dev);
 /*
  * Copies the tensor shape into caller-provided storage.
  *
@@ -155,15 +156,14 @@ extern Ten_Status T_tensor_is_contiguous(const Tensor *t, bool *out);
  *  */
 
 /*
- * Returns a mutable pointer to the first logical element
- * for CPU tensors.
+ * Returns a borrowed pointer to the first logical element.
  *
- * The pointer is borrowed and must not be freed.
- * Modifications through this pointer are visible through
- * every tensor sharing the same underlying storage.
- *
- * The pointer does not imply that the tensor is contiguous.
- * Check T_tensor_is_contiguous() before flat iteration.
+ * The returned pointer:
+ * - Does not retain the underlying storage.
+ * - Must not be freed by the caller.
+ * - Remains valid only while the underlying storage remains alive
+ *   and is not reallocated.
+ * - Is accessible only for host-accessible storage.
  */
 extern Ten_Status T_data(const Tensor *src, void **data);
 

@@ -228,7 +228,7 @@ if(BUILD_TESTING)
 
     ten_add_cuda_test(cuda_memory cuda_memory_test.c)
     ten_add_cuda_test(cuda_copy cuda_copy_test.c)
-
+    ten_add_cuda_test(cuda_copy2 cuda_copy_test2.c)
   endif()
 
 endif()

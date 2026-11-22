@@ -631,24 +631,27 @@ Ten_Status T_tensor_contiguous_materialize(Tensor *dst, const Tensor *src) {
   if (src->num_el < 0 || src->offset < 0)
     return status_error(TT_ERR_INVALID_ARG, "invalid source metadata");
 
+  /* Validate source device and backend. */
   const Device source_device = src->storage->device;
-  const Device host_device = {.devtype = CPU, .id = 0};
 
-  /* Validate supported source device. */
-  if (source_device.devtype != CPU && source_device.devtype != CUDA)
-    return status_error(TT_ERR_UNSUPPORTED, "unsupported source device");
+  Ten_Status status = T_validate_device(source_device);
+  if (status.stype != TT_OK)
+    return status;
 
-  if (source_device.id < 0)
-    return status_error(TT_ERR_INVALID_ARG, "invalid source device ID");
-
-  /* Validate tensor bounds against its storage. */
-  if (!T_validate_tensor_bounds(src))
-    return status_error(TT_ERR_OUT_OF_RANGE, "tensor exceeds storage bounds");
-
+  /* Validate dtype size. */
   const size_t dtype_size = T_get_dtype_size(src->storage->dtype);
 
   if (dtype_size == 0)
     return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported dtype");
+
+  /* Validate element count against shape. */
+  i64 expected_numel;
+
+  if (!T_get_numel(src->rank, src->shape, &expected_numel))
+    return status_error(TT_ERR_OVERFLOW, "source element count overflow");
+
+  if (expected_numel != src->num_el)
+    return status_error(TT_ERR_INVALID_STATE, "source element count mismatch");
 
   /* Validate storage size. */
   if (src->storage->n_bytes % dtype_size != 0)
@@ -659,18 +662,26 @@ Ten_Status T_tensor_contiguous_materialize(Tensor *dst, const Tensor *src) {
 
   const size_t n_bytes = (size_t)src->num_el * dtype_size;
 
+  /* Validate source tensor bounds. */
+  if (!T_validate_tensor_bounds(src))
+    return status_error(TT_ERR_OUT_OF_RANGE, "tensor exceeds storage bounds");
+
+  if (n_bytes > 0 && src->storage->data == NULL)
+    return status_error(TT_ERR_INVALID_STATE, "source storage data is NULL");
+
   Tensor tmp = {0};
 
   tmp.rank = src->rank;
   tmp.num_el = src->num_el;
   tmp.offset = 0;
 
-  /* Allocate destination metadata. */
+  /* Allocate destination shape. */
   if (!T_allocate_shape(&tmp, src->shape, src->rank)) {
     T_destroy_tensor(&tmp);
     return status_error(TT_ERR_NO_MEMORY, "shape allocation failed");
   }
 
+  /* Allocate destination strides. */
   if (!T_allocate_stride(&tmp)) {
     T_destroy_tensor(&tmp);
     return status_error(TT_ERR_NO_MEMORY, "stride allocation failed");
@@ -683,138 +694,43 @@ Ten_Status T_tensor_contiguous_materialize(Tensor *dst, const Tensor *src) {
                         "contiguous stride calculation failed");
   }
 
-  /* Allocate destination storage on the source device. */
-  Ten_Status status = T_create_empty_storage(&tmp.storage, src->storage->dtype,
-                                             source_device, n_bytes);
+  /* Allocate storage on the source device. */
+  status = T_create_empty_storage(&tmp.storage, src->storage->dtype,
+                                  source_device, n_bytes);
 
   if (status.stype != TT_OK) {
     T_destroy_tensor(&tmp);
     return status;
   }
 
-  /*
-   * Empty tensors require no memory access or transfer.
-   * Commit the fully constructed tensor.
-   */
-  if (n_bytes == 0) {
-    *dst = tmp;
-    return status_ok();
-  }
-
-  unsigned char *source_staging = NULL;
-  unsigned char *host_dst = NULL;
-
-  const unsigned char *host_src = NULL;
-
-  /*
-   * Stage source storage to host memory when necessary.
-   */
-  if (source_device.devtype == CPU) {
-    if (src->storage->data == NULL) {
-      status =
-          status_error(TT_ERR_INVALID_STATE, "source storage data is NULL");
-      goto materialize_cleanup;
-    }
-
-    host_src = (const unsigned char *)src->storage->data;
-  } else {
-    source_staging = malloc(src->storage->n_bytes);
-
-    if (source_staging == NULL) {
-      status =
-          status_error(TT_ERR_NO_MEMORY, "source staging allocation failed");
-      goto materialize_cleanup;
-    }
-
-    status = storage_copy(source_staging, host_device, src->storage->data,
-                          source_device, src->storage->n_bytes);
-
-    if (status.stype != TT_OK)
-      goto materialize_cleanup;
-
-    host_src = source_staging;
+  if (n_bytes > 0 && tmp.storage->data == NULL) {
+    T_destroy_tensor(&tmp);
+    return status_error(TT_ERR_INVALID_STATE,
+                        "destination storage data is NULL");
   }
 
   /*
-   * Allocate contiguous host destination.
+   * Copy logical tensor elements into contiguous destination storage.
+   *
+   * T_copy_tensor_data handles:
+   * - Contiguous backend-to-backend transfers.
+   * - Non-contiguous host gathering.
+   * - CUDA source staging.
+   * - CUDA destination staging.
    */
-  host_dst = malloc(n_bytes);
+  if (n_bytes > 0) {
+    status = T_copy_tensor_data(tmp.storage, src);
 
-  if (host_dst == NULL) {
-    status =
-        status_error(TT_ERR_NO_MEMORY, "destination staging allocation failed");
-    goto materialize_cleanup;
-  }
-
-  /*
-   * Gather logical tensor elements into contiguous host memory.
-   */
-  i64 indices[TT_MAX_RANK] = {0};
-
-  for (i64 n = 0; n < src->num_el; ++n) {
-    i64 src_offset = src->offset;
-
-    for (i32 d = 0; d < src->rank; ++d) {
-      i64 delta;
-
-      if (T_check_i64_mul(indices[d], src->strides[d], &delta) != RNG_OK ||
-          T_check_i64_add(src_offset, delta, &src_offset) != RNG_OK) {
-        status =
-            status_error(TT_ERR_OVERFLOW, "source element offset overflow");
-        goto materialize_cleanup;
-      }
-    }
-
-    size_t src_byte_offset;
-    size_t dst_byte_offset;
-
-    if (T_checked_mul_size((size_t)src_offset, dtype_size, &src_byte_offset) !=
-            RNG_OK ||
-        T_checked_mul_size((size_t)n, dtype_size, &dst_byte_offset) != RNG_OK) {
-      status =
-          status_error(TT_ERR_OVERFLOW, "materialization byte offset overflow");
-      goto materialize_cleanup;
-    }
-
-    /*
-     * Bounds are guaranteed by T_validate_tensor_bounds()
-     * and the validated multidimensional index traversal.
-     */
-    memcpy(host_dst + dst_byte_offset, host_src + src_byte_offset, dtype_size);
-
-    /* Increment multidimensional indices. */
-    for (i32 d = src->rank - 1; d >= 0; --d) {
-      indices[d]++;
-
-      if (indices[d] < src->shape[d])
-        break;
-
-      indices[d] = 0;
+    if (status.stype != TT_OK) {
+      T_destroy_tensor(&tmp);
+      return status;
     }
   }
 
-  /*
-   * Transfer contiguous result to destination device.
-   */
-  status = storage_copy(tmp.storage->data, tmp.storage->device, host_dst,
-                        host_device, n_bytes);
-
-  if (status.stype != TT_OK)
-    goto materialize_cleanup;
-
-  /* Release staging buffers and commit ownership. */
-  free(host_dst);
-  free(source_staging);
-
+  /* Commit ownership only after successful construction. */
   *dst = tmp;
+
   return status_ok();
-
-materialize_cleanup:
-  free(host_dst);
-  free(source_staging);
-  T_destroy_tensor(&tmp);
-
-  return status;
 }
 
 Ten_Status T_tensor_slice(Tensor *dst, const Tensor *src, i32 dim, i64 start,

@@ -47,7 +47,27 @@ bool T_get_numel(const i32 ranks, const i64 *shape, i64 *out) {
 static inline bool T_storage_is_host_accessible(const TensorStorage *storage) {
   return storage != NULL && storage->device.devtype == CPU;
 }
+Ten_Status T_validate_device(Device dev) {
+  if (dev.id < 0)
+    return status_error(TT_ERR_INVALID_ARG, "device id is negative");
 
+  switch (dev.devtype) {
+  case CPU:
+  case CUDA:
+    if (dev.id != 0)
+      return status_error(TT_ERR_UNSUPPORTED, "device id is not supported");
+    break;
+
+  default:
+    return status_error(TT_ERR_UNSUPPORTED, "unsupported device type");
+  }
+
+  if (T_get_backend(dev) == NULL)
+    return status_error(TT_ERR_UNSUPPORTED,
+                        "requested device backend is unavailable");
+
+  return status_ok();
+}
 bool T_is_shape_input_valid(const i64 *input_shape, i32 ranks) {
   if (!T_is_ranks_valid(ranks))
     return false;
@@ -261,12 +281,12 @@ bool T_calculate_strides(i64 *strides, const i64 *shape, i32 rank) {
 }
 static void free_shape(i64 *shape) { free(shape); }
 static void free_strides(i64 *strides) { free(strides); }
+
 static Ten_Status storage_allocate(void **out, Device device, size_t n_bytes) {
   if (out == NULL)
     return status_error(TT_ERR_INVALID_ARG, "output pointer is NULL");
 
   *out = NULL;
-
   const Ten_Backend *backend = T_get_backend(device);
 
   if (backend == NULL)
@@ -279,6 +299,7 @@ static Ten_Status storage_allocate(void **out, Device device, size_t n_bytes) {
 
   return backend->memory.allocate(out, n_bytes);
 }
+
 Ten_Status storage_copy(void *dst, Device dst_device, const void *src,
                         Device src_device, size_t n_bytes) {
   if (n_bytes == 0)
@@ -299,7 +320,13 @@ Ten_Status storage_copy(void *dst, Device dst_device, const void *src,
 
   Ten_CopyKind kind;
   Device backend_device;
+  Ten_Status status = T_validate_device(dst_device);
+  if (status.stype != TT_OK)
+    return status;
 
+  status = T_validate_device(src_device);
+  if (status.stype != TT_OK)
+    return status;
   // if (src_device.devtype == CPU && dst_device.devtype == CPU) {
   //   kind = TEN_COPY_HOST_TO_HOST;
   //   backend_device = dst_device;
@@ -331,36 +358,33 @@ Ten_Status storage_copy(void *dst, Device dst_device, const void *src,
 
   return backend->memory.copy(dst, src, n_bytes, kind);
 }
+
 Ten_Status storage_copy_from_host(void *dst, Device dst_device, const void *src,
                                   size_t n_bytes) {
   const Device host = {.devtype = CPU, .id = 0};
 
   return storage_copy(dst, dst_device, src, host, n_bytes);
 }
+
 Ten_Status storage_copy_to_host(void *dst, Device dst_device, const void *src,
                                 size_t n_bytes) {
   const Device host = {.devtype = CPU, .id = 0};
 
   return storage_copy(dst, host, src, dst_device, n_bytes);
 }
-static Ten_Status storage_deallocate(void *data, Device device) {
-  if (data == NULL)
+
+static Ten_Status storage_deallocate(void **data, Device device) {
+  if (data == NULL || *data == NULL)
     return status_ok();
 
   const Ten_Backend *backend = T_get_backend(device);
 
   if (backend == NULL || backend->memory.deallocate == NULL)
-    return status_error(TT_ERR_UNSUPPORTED, "Storage backend is unavailable");
+    return status_error(TT_ERR_UNSUPPORTED, "storage backend is unavailable");
 
-  /*
-   * The backend deallocate function accepts void **.
-   * local pointer is used because the storage structure
-   * owns the original data pointer.
-   */
-  void *ptr = data;
-
-  return backend->memory.deallocate(&ptr);
+  return backend->memory.deallocate(data);
 }
+
 static void storage_destroy(TensorStorage **storage) {
   if (storage == NULL || *storage == NULL)
     return;
@@ -369,7 +393,7 @@ static void storage_destroy(TensorStorage **storage) {
   *storage = NULL;
 
   if (st->data != NULL) {
-    Ten_Status status = storage_deallocate(st->data, st->device);
+    Ten_Status status = storage_deallocate(&st->data, st->device);
 
     if (status.stype != TT_OK)
       T_PRINT_STATUS(status);
@@ -386,28 +410,6 @@ Ten_Status T_is_host_accessible(Device device) {
   return status_ok();
 }
 
-Ten_Status T_data(const Tensor *src, void **data) {
-  if (src == NULL)
-    return status_error(TT_ERR_INVALID_ARG, "source tensor is NULL");
-
-  if (data == NULL)
-    return status_error(TT_ERR_INVALID_ARG, "data output pointer is NULL");
-
-  *data = NULL;
-
-  if (src->storage == NULL)
-    return status_error(TT_ERR_INVALID_STATE, "tensor storage is NULL");
-
-  if (!T_storage_is_host_accessible(src->storage))
-    return status_error(TT_ERR_DEVICE_MISMATCH,
-                        "Tensor data is not host accessible");
-  if (src->num_el > 0 && src->storage->data == NULL)
-    return status_error(TT_ERR_INVALID_STATE, "tensor storage data is NULL");
-
-  *data = src->storage->data;
-
-  return status_ok();
-}
 Ten_Status T_device_data(const Tensor *t, void **data, Device *device) {
 
   if (t == NULL || data == NULL || device == NULL)
@@ -468,6 +470,7 @@ void T_storage_release(TensorStorage **storage) {
   }
 
   *storage = NULL;
+
   --st->ref_count;
 
   if (st->ref_count == 0)
@@ -490,19 +493,81 @@ Ten_Status T_validate_new_tensor(const Tensor *t, DataType dtype,
   if (T_get_dtype_size(dtype) == 0)
     return (Ten_Status){TT_ERR_DTYPE_UNSUPPORTED, "unsupported dtype"};
 
+  if (T_validate_device(dev).stype != TT_OK) {
+    return (Ten_Status){TT_ERR_DEVICE_MISMATCH, "unsupported device type"};
+  }
   return (Ten_Status){TT_OK, "success"};
 }
-Ten_Status T_const_data(const Tensor *t, const void **data) {
-  if (t == NULL || data == NULL)
-    return status_error(TT_ERR_INVALID_ARG, "Invalid argument");
+
+Ten_Status T_data(const Tensor *src, void **data) {
+  if (src == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "source tensor is NULL");
+
+  if (data == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "data output pointer is NULL");
 
   *data = NULL;
 
-  if (t->storage == NULL)
-    return status_error(TT_ERR_INVALID_STATE, "Tensor has no storage");
+  if (src->storage == NULL)
+    return status_error(TT_ERR_INVALID_STATE, "tensor storage is NULL");
 
-  *data = (const void *)((const char *)t->storage->data +
-                         t->offset * T_get_dtype_size(t->storage->dtype));
+  size_t dtype_size = T_get_dtype_size(src->storage->dtype);
+
+  if (dtype_size == 0)
+    return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported tensor dtype");
+
+  size_t byte_offset = 0;
+
+  if (T_checked_mul_size((size_t)src->offset, dtype_size, &byte_offset) !=
+      RNG_OK)
+    return status_error(TT_ERR_OVERFLOW, "tensor offset overflow");
+
+  if (src->num_el > 0)
+    *data = (unsigned char *)src->storage->data + byte_offset;
+
+  return status_ok();
+}
+
+Ten_Status T_const_data(const Tensor *src, const void **data) {
+  if (src == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "source tensor is NULL");
+
+  if (data == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "data output pointer is NULL");
+
+  *data = NULL;
+
+  if (src->storage == NULL)
+    return status_error(TT_ERR_INVALID_STATE, "tensor storage is NULL");
+
+  if (T_is_host_accessible(src->storage->device).stype != TT_OK)
+    return status_error(TT_ERR_DEVICE_MISMATCH,
+                        "tensor data is not host accessible");
+
+  if (src->offset < 0)
+    return status_error(TT_ERR_INVALID_ARG, "tensor offset is negative");
+
+  if (!T_validate_tensor_bounds(src))
+    return status_error(TT_ERR_INVALID_STATE,
+                        "tensor metadata exceeds storage bounds");
+
+  if (src->num_el > 0 && src->storage->data == NULL)
+    return status_error(TT_ERR_INVALID_STATE, "tensor storage data is NULL");
+
+  size_t dtype_size = T_get_dtype_size(src->storage->dtype);
+
+  if (dtype_size == 0)
+    return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported tensor dtype");
+
+  size_t byte_offset = 0;
+
+  if (T_checked_mul_size((size_t)src->offset, dtype_size, &byte_offset) !=
+      RNG_OK)
+    return status_error(TT_ERR_OVERFLOW, "tensor offset overflow");
+
+  if (src->num_el > 0) {
+    *data = (const unsigned char *)src->storage->data + byte_offset;
+  }
 
   return status_ok();
 }
@@ -539,75 +604,86 @@ Ten_Status storage_fill(void *dst, Device device, const void *host_scalar,
 
 static bool initialize_data(void *data, DataType dtype, i64 numel,
                             Device device, FillMode mode, const void *scalar) {
-
   if (numel < 0)
+    return false;
+
+  if (device.id != 0 || device.id < 0)
+    return false;
+  if (device.devtype != CPU && device.devtype != CUDA)
     return false;
 
   if (numel == 0)
     return true;
 
+  if (data == NULL)
+    return false;
+
+  if (T_get_dtype_size(dtype) == 0 || T_is_dtype_complex(dtype))
+    return false;
+
   if (mode == FROM_SCALAR) {
+    if (scalar == NULL)
+      return false;
+
     return storage_fill(data, device, scalar, dtype, numel).stype == TT_OK;
   }
 
-  if (mode == ZEROS || mode == ONES) {
-    union {
-      float as_f32;
-      double as_f64;
-      int8_t as_i8;
-      int16_t as_i16;
-      int32_t as_i32;
-      int64_t as_i64;
-      uint8_t as_u8;
-      uint16_t as_u16;
-      uint32_t as_u32;
-      uint64_t as_u64;
-    } value = {0};
+  if (mode != ZEROS && mode != ONES)
+    return false;
 
-    if (mode == ONES) {
-      switch (dtype) {
-      case F32:
-        value.as_f32 = 1.0f;
-        break;
-      case F64:
-        value.as_f64 = 1.0;
-        break;
-      case I8:
-        value.as_i8 = 1;
-        break;
-      case I16:
-        value.as_i16 = 1;
-        break;
-      case I32:
-        value.as_i32 = 1;
-        break;
-      case I64:
-        value.as_i64 = 1;
-        break;
-      case U8:
-        value.as_u8 = 1;
-        break;
-      case U16:
-        value.as_u16 = 1;
-        break;
-      case U32:
-        value.as_u32 = 1;
-        break;
-      case U64:
-        value.as_u64 = 1;
-        break;
-      default:
-        return false;
-      }
-    } else if (T_get_dtype_size(dtype) == 0 || T_is_dtype_complex(dtype)) {
+  union {
+    float as_f32;
+    double as_f64;
+    int8_t as_i8;
+    int16_t as_i16;
+    int32_t as_i32;
+    int64_t as_i64;
+    uint8_t as_u8;
+    uint16_t as_u16;
+    uint32_t as_u32;
+    uint64_t as_u64;
+  } value = {0};
+
+  if (mode == ONES) {
+    switch (dtype) {
+    case F32:
+      value.as_f32 = 1.0f;
+      break;
+    case F64:
+      value.as_f64 = 1.0;
+      break;
+    case I8:
+      value.as_i8 = 1;
+      break;
+    case I16:
+      value.as_i16 = 1;
+      break;
+    case I32:
+      value.as_i32 = 1;
+      break;
+    case I64:
+      value.as_i64 = 1;
+      break;
+    case U8:
+      value.as_u8 = 1;
+      break;
+    case U16:
+      value.as_u16 = 1;
+      break;
+    case U32:
+      value.as_u32 = 1;
+      break;
+    case U64:
+      value.as_u64 = 1;
+      break;
+    default:
       return false;
     }
-
-    return storage_fill(data, device, &value, dtype, numel).stype == TT_OK;
   }
 
-  return false;
+  return storage_fill(data, device, &value, dtype, numel).stype == TT_OK;
 }
+
 static void release_tensor(Tensor *t) {
   if (t == NULL)
     return;
@@ -641,38 +717,51 @@ static Ten_Status tensor_create_initialized(Tensor *t, DataType dtype,
                                             const i64 *shape, i32 rank,
                                             Device dev, FillMode mode,
                                             const void *scalar) {
+  if (t == NULL)
+    return status_error(TT_ERR_INVALID_ARG, "output tensor is NULL");
+
   Ten_Status status = T_validate_new_tensor(t, dtype, shape, rank, dev);
 
   if (status.stype != TT_OK)
     return status;
 
   if (mode == FROM_SCALAR && scalar == NULL)
-    return (Ten_Status){TT_ERR_INVALID_ARG, "fill scalar is NULL"};
+    return status_error(TT_ERR_INVALID_ARG, "fill scalar is NULL");
+
+  status = T_validate_device(dev);
+  if (status.stype != TT_OK)
+    return status;
+
+  const Ten_Backend *backend = T_get_backend(dev);
+
+  if (backend == NULL || backend->memory.allocate == NULL ||
+      backend->memory.deallocate == NULL || backend->ops.fill == NULL)
+    return status_error(TT_ERR_UNSUPPORTED,
+                        "device backend lacks initialization operations");
 
   size_t dt_size = T_get_dtype_size(dtype);
+
   if (dt_size == 0)
-    return (Ten_Status){TT_ERR_DTYPE_UNSUPPORTED, "unsupported dtype"};
-  if (dev.devtype != CPU)
-    return status_error(TT_ERR_UNSUPPORTED,
-                        "host initialization is not supported for this device");
+    return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported dtype");
+
   Tensor tmp = {0};
   tmp.rank = rank;
   tmp.offset = 0;
 
-  if (!T_get_numel(rank, shape, &tmp.num_el)) {
-    return (Ten_Status){TT_ERR_OVERFLOW,
-                        "invalid shape or element count overflow"};
-  }
+  if (!T_get_numel(rank, shape, &tmp.num_el))
+    return status_error(TT_ERR_OVERFLOW,
+                        "invalid shape or element count overflow");
 
-  if ((uint64_t)tmp.num_el > SIZE_MAX / dt_size) {
-    return (Ten_Status){TT_ERR_OVERFLOW, "tensor byte size overflow"};
-  }
+  if ((uint64_t)tmp.num_el > SIZE_MAX / dt_size)
+    return status_error(TT_ERR_OVERFLOW, "tensor byte size overflow");
 
   size_t n_bytes = (size_t)tmp.num_el * dt_size;
 
   status = tensor_init_layout(&tmp, shape, rank);
-  if (status.stype != TT_OK)
+  if (status.stype != TT_OK) {
+    release_tensor(&tmp);
     return status;
+  }
 
   tmp.storage = calloc(1, sizeof(*tmp.storage));
 
@@ -686,21 +775,24 @@ static Ten_Status tensor_create_initialized(Tensor *t, DataType dtype,
   tmp.storage->device = dev;
   tmp.storage->ref_count = 1;
 
-  status = storage_allocate((void **)&tmp.storage->data, dev, n_bytes);
-  if (status.stype != TT_OK) {
-    release_tensor(&tmp);
-    return status;
+  if (n_bytes > 0) {
+    status = storage_allocate((void **)&tmp.storage->data, dev, n_bytes);
+
+    if (status.stype != TT_OK) {
+      release_tensor(&tmp);
+      return status;
+    }
   }
 
   if (!initialize_data(tmp.storage->data, dtype, tmp.num_el, dev, mode,
                        scalar)) {
     release_tensor(&tmp);
-    return (Ten_Status){TT_ERR_INTERNAL, "tensor data initialization failed"};
+    return status_error(TT_ERR_INTERNAL, "tensor data initialization failed");
   }
 
   *t = tmp;
 
-  return (Ten_Status){TT_OK, "success"};
+  return status_ok();
 }
 
 void T_destroy_tensor(Tensor *t) { release_tensor(t); }
@@ -715,12 +807,20 @@ Ten_Status T_create_tensor_storage(TensorStorage **ts, const void *input_data,
   if (*ts != NULL)
     return status_error(TT_ERR_INVALID_STATE,
                         "storage pointer is already initialized");
-
+  if (n_bytes == 0)
+    return status_ok();
   if (n_bytes > 0 && input_data == NULL)
     return status_error(TT_ERR_INVALID_ARG, "input data is NULL");
 
-  Ten_Status status =
-      T_create_empty_storage(ts, dtype, storage_device, n_bytes);
+  Ten_Status status = T_validate_device(input_device);
+  if (status.stype != TT_OK)
+    return status;
+
+  status = T_validate_device(storage_device);
+
+  if (status.stype != TT_OK)
+    return status;
+  status = T_create_empty_storage(ts, dtype, storage_device, n_bytes);
 
   if (status.stype != TT_OK)
     return status;
@@ -785,6 +885,14 @@ Ten_Status T_copy_tensor_data(TensorStorage *dst, const Tensor *src) {
   if (src->storage == NULL)
     return status_error(TT_ERR_INVALID_STATE, "source has no storage");
 
+  Ten_Status status = T_validate_device(src->storage->device);
+  if (status.stype != TT_OK)
+    return status;
+
+  status = T_validate_device(dst->device);
+  if (status.stype != TT_OK)
+    return status;
+
   if (!T_is_dtype_valid(src->storage->dtype))
     return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported source dtype");
 
@@ -838,7 +946,7 @@ Ten_Status T_copy_tensor_data(TensorStorage *dst, const Tensor *src) {
                         "source tensor exceeds storage bounds");
 
   bool is_contiguous = false;
-  Ten_Status status = T_tensor_is_contiguous(src, &is_contiguous);
+  status = T_tensor_is_contiguous(src, &is_contiguous);
   if (status.stype != TT_OK)
     return status;
 
@@ -1150,10 +1258,9 @@ Ten_Status T_clone(Tensor *dst, const Tensor *src) {
 
     memcpy(tmp.strides, src->strides, (size_t)src->rank * sizeof(*tmp.strides));
   }
-  const Device host_device = {.devtype = CPU, .id = 0};
   Ten_Status status = T_create_tensor_storage(
-      &tmp.storage, src->storage->data, src->storage->dtype, host_device,
-      src->storage->device, src->storage->n_bytes);
+      &tmp.storage, src->storage->data, src->storage->dtype,
+      src->storage->device, src->storage->device, src->storage->n_bytes);
 
   if (status.stype != TT_OK) {
     release_tensor(&tmp);
