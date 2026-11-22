@@ -220,9 +220,27 @@ static int test_unsupported_device_status(void) {
   if (cuda_device_available()) {
     Device device = {.devtype = CUDA, .id = 0};
 
-    CHECK_STATUS(T_create_tensor(&t, values, F32, shape, 1, device), TT_OK);
+    void *device_values = NULL;
+    const size_t n_bytes = sizeof(values);
 
+    cudaError_t err = cudaMalloc(&device_values, n_bytes);
+    CHECK(err == cudaSuccess);
+
+    err = cudaMemcpy(device_values, values, n_bytes, cudaMemcpyHostToDevice);
+
+    if (err != cudaSuccess) {
+      cudaFree(device_values);
+      CHECK(0);
+    }
+
+    Ten_Status status =
+        T_create_tensor(&t, device_values, F32, shape, 1, device);
+
+    cudaFree(device_values);
+
+    CHECK_STATUS(status, TT_OK);
     CHECK(!tensor_is_empty(&t));
+
     T_destroy_tensor(&t);
   }
 
