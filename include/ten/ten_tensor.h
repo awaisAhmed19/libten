@@ -29,12 +29,14 @@ typedef struct Tensor {
   i64 offset;
   i64 num_el;
 } Tensor;
+
 typedef struct TensorView {
   void *data;
   i32 rank;
   DataType dtype;
   i64 shape[TT_MAX_RANK];
   i64 strides[TT_MAX_RANK];
+  Device dev;
 } TensorView;
 
 /*
@@ -174,7 +176,29 @@ extern Ten_Status T_data(const Tensor *src, void **data);
  * cannot modify the underlying storage.
  */
 extern Ten_Status T_const_data(const Tensor *t, const void **data);
-
+/*
+ * Returns the underlying data pointer and its owning device.
+ *
+ * The returned pointer is borrowed from the tensor's storage.
+ * No allocation or device transfer is performed.
+ *
+ * CPU:
+ *   Returns a host-accessible pointer.
+ *
+ * CUDA:
+ *   Returns a CUDA device pointer.
+ *   The pointer must not be dereferenced by host code.
+ *
+ * The caller must use the appropriate backend to access
+ * device-resident memory.
+ *
+ * Lifetime:
+ *   The pointer remains valid only while the tensor's
+ *   underlying storage remains alive and is not reallocated.
+ *
+ * The caller must not free or independently release the pointer.
+ */
+extern Ten_Status T_device_data(const Tensor *t, void **data, Device *device);
 /*
  * 7. Data movement
  *  */

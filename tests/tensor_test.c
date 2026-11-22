@@ -101,7 +101,7 @@ static int test_shared_storage_lifetime(void) {
   Tensor view = {0};
 
   CHECK_STATUS(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
-                                       sizeof(values)),
+                                       CPU_DEVICE, sizeof(values)),
                TT_OK);
   CHECK(storage->ref_count == 1);
   CHECK_STATUS(T_tensor_share_storage(&view, storage, shape, 2), TT_OK);

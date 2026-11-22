@@ -34,7 +34,7 @@ static int test_rejects_null_arguments(void) {
                TT_ERR_INVALID_ARG);
 
   CHECK_STATUS(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
-                                       sizeof(values)),
+                                       CPU_DEVICE, sizeof(values)),
                TT_OK);
   CHECK_STATUS(T_tensor_share_storage(NULL, storage, shape, 1),
                TT_ERR_INVALID_ARG);
@@ -51,7 +51,7 @@ static int test_shares_storage_and_copies_metadata(void) {
   Tensor dst = {0};
 
   CHECK_STATUS(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
-                                       sizeof(values)),
+                                       CPU_DEVICE, sizeof(values)),
                TT_OK);
   CHECK(storage->ref_count == 1);
 
@@ -92,7 +92,7 @@ static int test_rejects_insufficient_storage_capacity(void) {
   Tensor dst = {0};
 
   CHECK_STATUS(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
-                                       sizeof(values)),
+                                       CPU_DEVICE, sizeof(values)),
                TT_OK);
   CHECK_STATUS(T_tensor_share_storage(&dst, storage, too_large, 2),
                TT_ERR_OUT_OF_RANGE);
@@ -114,7 +114,8 @@ static int test_rejects_invalid_shapes_without_retaining(void) {
   Tensor dst = {0};
 
   CHECK_STATUS(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
-                                       sizeof(values)),
+                                       CPU_DEVICE, sizeof(values)),
+
                TT_OK);
   CHECK_STATUS(T_tensor_share_storage(&dst, storage, negative, 2),
                TT_ERR_INVALID_ARG);
@@ -136,9 +137,9 @@ static int test_scalar_tensor(void) {
   TensorStorage *storage = NULL;
   Tensor dst = {0};
 
-  CHECK_STATUS(
-      T_create_tensor_storage(&storage, &value, F32, CPU_DEVICE, sizeof(value)),
-      TT_OK);
+  CHECK_STATUS(T_create_tensor_storage(&storage, &value, F32, CPU_DEVICE,
+                                       CPU_DEVICE, sizeof(value)),
+               TT_OK);
   CHECK_STATUS(T_tensor_share_storage(&dst, storage, NULL, 0), TT_OK);
   CHECK(dst.rank == 0);
   CHECK(dst.num_el == 1);
@@ -160,8 +161,9 @@ static int test_empty_tensor(void) {
   TensorStorage *storage = NULL;
   Tensor dst = {0};
 
-  CHECK_STATUS(T_create_tensor_storage(&storage, NULL, F32, CPU_DEVICE, 0),
-               TT_OK);
+  CHECK_STATUS(
+      T_create_tensor_storage(&storage, NULL, F32, CPU_DEVICE, CPU_DEVICE, 0),
+      TT_OK);
   CHECK_STATUS(T_tensor_share_storage(&dst, storage, shape, 3), TT_OK);
   CHECK(dst.rank == 3);
   CHECK(dst.num_el == 0);
@@ -183,7 +185,7 @@ static int test_rejects_nonempty_destination(void) {
   Tensor dst = {0};
 
   CHECK_STATUS(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
-                                       sizeof(values)),
+                                       CPU_DEVICE, sizeof(values)),
                TT_OK);
   CHECK_STATUS(T_tensor_share_storage(&dst, storage, shape, 1), TT_OK);
   CHECK_STATUS(T_tensor_share_storage(&dst, storage, shape, 1),
@@ -201,7 +203,7 @@ static int test_rejects_reference_count_overflow(void) {
   Tensor dst = {0};
 
   CHECK_STATUS(T_create_tensor_storage(&storage, values, F32, CPU_DEVICE,
-                                       sizeof(values)),
+                                       CPU_DEVICE, sizeof(values)),
                TT_OK);
 
   storage->ref_count = UINT32_MAX;

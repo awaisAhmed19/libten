@@ -113,6 +113,7 @@ set(TEN_SOURCES
 
 if(TEN_CUDA_AVAILABLE)
   list(APPEND TEN_SOURCES src/backend/cuda/ten_memory.cu)
+  list(APPEND TEN_SOURCES src/backend/cuda/ten_ops.cu)
 endif()
 
 #

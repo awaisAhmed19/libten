@@ -8,6 +8,8 @@ extern "C" {
 #endif
 Ten_Status cuda_add(Tensor *dst, const Tensor *a, const Tensor *b);
 Ten_Status cuda_matmul(Tensor *dst, const Tensor *a, const Tensor *b);
+Ten_Status cuda_storage_fill(void *dst, const void *host_scalar, DataType dtype,
+                             size_t numel);
 #ifdef __cplusplus
 }
 #endif

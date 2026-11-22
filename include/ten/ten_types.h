@@ -1,10 +1,21 @@
+
 #pragma once
+
 #include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+/*
+ * Stringification
+ *  */
+
 #define str(x) #x
 #define xstr(x) str(x)
+
+/*
+ * Numeric limits
+ *  */
 
 #define ZERO 0
 
@@ -30,6 +41,10 @@
 #define I64_MAX INT64_MAX
 #define I64_MIN INT64_MIN
 
+/*
+ * Primitive type aliases
+ *  */
+
 typedef int8_t i8;
 typedef int16_t i16;
 typedef int32_t i32;
@@ -45,49 +60,20 @@ typedef void u0;
 typedef float f32;
 typedef double f64;
 
+/*
+ * Device types
+ *  */
+
 enum DevType { CPU = 0, CUDA = 1 };
 
-typedef enum RangeStatus {
-  RNG_OK = 0,
-  RNG_UNDERFLOW,
-  RNG_OVERFLOW,
-  RNG_DIVISIBLE_BY_ZERO,
-  RNG_INVALID_ARG
-} RangeStatus;
-
-typedef struct {
-  void *result; // can be made to be any DataType for a valid result or return
-                // null;
-  RangeStatus status;
-} Results;
-// else just do a check in a fuction and define the operation after the check
-// fuction passes then this result struct is unnecessary
-typedef enum { TT_SCALAR_FLOAT, TT_SCALAR_INT } TT_ScalarKind;
-
-typedef struct {
-  TT_ScalarKind kind;
-  union {
-    double f;
-    int64_t i;
-  } value;
-} TT_Scalar;
-
-typedef struct {
-  float real;
-  float imaginary;
-} Complex64;
-
-typedef Complex64 c64;
-typedef struct {
-  double real;
-  double imaginary;
-} Complex128;
-
-typedef Complex128 c128;
 typedef struct {
   enum DevType devtype;
   int id;
 } Device;
+
+/*
+ * Data types
+ *  */
 
 typedef enum DataType {
   I8 = 0,
@@ -109,7 +95,72 @@ typedef enum DataType {
   DTYPE_COUNT
 } DataType;
 
+/*
+ * Status and result types
+ *  */
+
+typedef enum RangeStatus {
+  RNG_OK = 0,
+  RNG_UNDERFLOW,
+  RNG_OVERFLOW,
+  RNG_DIVISIBLE_BY_ZERO,
+  RNG_INVALID_ARG
+} RangeStatus;
+
+typedef struct {
+  void *result;
+  RangeStatus status;
+} Results;
+
+/*
+ * Scalar types
+ *  */
+
+typedef enum { TT_SCALAR_FLOAT, TT_SCALAR_INT } TT_ScalarKind;
+
+typedef struct {
+  TT_ScalarKind kind;
+  union {
+    double f;
+    int64_t i;
+  } value;
+} TT_Scalar;
+
+/*
+ * Complex types
+ *  */
+
+typedef struct {
+  float real;
+  float imaginary;
+} Complex64;
+
+typedef Complex64 c64;
+
+typedef struct {
+  double real;
+  double imaginary;
+} Complex128;
+
+typedef Complex128 c128;
+
+/*
+ * C API
+ *
+ * Keep declarations inside extern "C" when included from C++ translation
+ * units, including CUDA .cu files compiled by NVCC.
+ *  */
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Constants */
+
 extern const double PI;
+
+/* Data type utilities */
+
 extern size_t T_get_dtype_size(enum DataType dtype);
 
 extern bool T_is_dtype_sint(const enum DataType type);
@@ -118,28 +169,45 @@ extern bool T_is_dtype_float(const enum DataType type);
 extern bool T_is_dtype_uint(const enum DataType type);
 extern bool T_is_dtype_complex(const enum DataType type);
 extern bool T_is_dtype_valid(const enum DataType type);
+
+/* Checked size arithmetic */
+
 extern RangeStatus T_checked_add_size(size_t a, size_t b, size_t *out);
 extern RangeStatus T_checked_mul_size(size_t a, size_t b, size_t *out);
+
+/* Checked signed integer multiplication */
 
 extern RangeStatus T_check_i8_mul(i8 a, i8 b, i8 *out);
 extern RangeStatus T_check_i16_mul(i16 a, i16 b, i16 *out);
 extern RangeStatus T_check_i32_mul(i32 a, i32 b, i32 *out);
 extern RangeStatus T_check_i64_mul(i64 a, i64 b, i64 *out);
 
+/* Checked signed integer addition */
+
 extern RangeStatus T_check_i8_add(i8 a, i8 b, i8 *out);
 extern RangeStatus T_check_i16_add(i16 a, i16 b, i16 *out);
 extern RangeStatus T_check_i32_add(i32 a, i32 b, i32 *out);
 extern RangeStatus T_check_i64_add(i64 a, i64 b, i64 *out);
+
+/* Checked unsigned integer addition */
 
 extern RangeStatus T_check_u8_add(u8 a, u8 b, u8 *out);
 extern RangeStatus T_check_u16_add(u16 a, u16 b, u16 *out);
 extern RangeStatus T_check_u32_add(u32 a, u32 b, u32 *out);
 extern RangeStatus T_check_u64_add(u64 a, u64 b, u64 *out);
 
+/* Checked unsigned integer subtraction */
+
 extern RangeStatus T_check_u8_sub(u8 a, u8 b, u8 *out);
 extern RangeStatus T_check_u16_sub(u16 a, u16 b, u16 *out);
 extern RangeStatus T_check_u32_sub(u32 a, u32 b, u32 *out);
 extern RangeStatus T_check_u64_sub(u64 a, u64 b, u64 *out);
 
+/* Checked floating-point addition */
+
 extern RangeStatus T_check_f64_add(f64 a, f64 b, f64 *out);
 extern RangeStatus T_check_f32_add(f32 a, f32 b, f32 *out);
+
+#ifdef __cplusplus
+}
+#endif

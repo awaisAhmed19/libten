@@ -1,19 +1,38 @@
 #include "internal/ten_backend.h"
 #include "backend/cpu/ten_memory.h"
+#include "backend/cpu/ten_ops.h"
+#include "backend/cuda/ten_ops.h"
 
 #ifdef USE_CUDA
 #include "backend/cuda/ten_memory.h"
 #endif
 
-static const Ten_Backend cpu_backend = {.memory = {.allocate = cpu_allocate,
-                                                   .deallocate = cpu_deallocate,
-                                                   .copy = cpu_copy}};
+static const Ten_Backend cpu_backend = {
+    .memory =
+        {
+            .allocate = cpu_allocate,
+            .deallocate = cpu_deallocate,
+            .copy = cpu_copy,
+        },
+    .ops =
+        {
+            .fill = cpu_storage_fill,
+        },
+};
 
 #ifdef USE_CUDA
 static const Ten_Backend cuda_backend = {
-    .memory = {.allocate = cuda_allocate,
-               .deallocate = cuda_deallocate,
-               .copy = cuda_copy}};
+    .memory =
+        {
+            .allocate = cuda_allocate,
+            .deallocate = cuda_deallocate,
+            .copy = cuda_copy,
+        },
+    .ops =
+        {
+            .fill = cuda_storage_fill,
+        },
+};
 #endif
 
 const Ten_Backend *T_get_backend(Device device) {

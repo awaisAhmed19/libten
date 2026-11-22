@@ -3,6 +3,7 @@
 #include "internal/ten_tensor.h"
 #include "ten/ten_tensor.h"
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 bool T_is_permutation(const i64 *dims, i32 rank) {
@@ -112,41 +113,49 @@ bool T_validate_tensor_bounds(const Tensor *t) {
 Ten_Status T_create_tensor_view(TensorView *tv, const Tensor *t) {
 
   if (tv == NULL || t == NULL)
-    return (Ten_Status){TT_ERR_INVALID_ARG, "null argument"};
+    return status_error(TT_ERR_INVALID_ARG, "null argument");
 
   if (tv->data != NULL || tv->rank != 0)
-    return (Ten_Status){TT_ERR_INVALID_STATE,
-                        "destination tensorview is not empty"};
+    return status_error(TT_ERR_INVALID_STATE,
+                        "destination tensorview is not empty");
 
   if (t->storage == NULL)
-    return (Ten_Status){TT_ERR_INVALID_STATE, "source tensor has no storage"};
+    return status_error(TT_ERR_INVALID_STATE, "source tensor has no storage");
 
   if (!T_is_ranks_valid(t->rank) ||
       !T_is_shape_input_valid(t->shape, t->rank) ||
-      (t->rank > 0 && t->strides == NULL)) {
-    return (Ten_Status){TT_ERR_INVALID_ARG, "invalid source tensor metadata"};
-  }
+      (t->rank > 0 && t->strides == NULL))
+    return status_error(TT_ERR_INVALID_ARG, "invalid source tensor metadata");
 
   size_t dtype_size = T_get_dtype_size(t->storage->dtype);
 
   if (dtype_size == 0)
-    return (Ten_Status){TT_ERR_DTYPE_UNSUPPORTED, "unsupported source dtype"};
+    return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported source dtype");
+
+  Device device = t->storage->device;
+
+  if (device.devtype != CPU && device.devtype != CUDA)
+    return status_error(TT_ERR_UNSUPPORTED, "unsupported source device");
+
+  if (device.id < 0)
+    return status_error(TT_ERR_INVALID_ARG, "invalid source device ID");
 
   if (!T_validate_tensor_bounds(t))
-    return (Ten_Status){TT_ERR_INVALID_ARG, "tensor exceeds storage bounds"};
+    return status_error(TT_ERR_INVALID_ARG, "tensor exceeds storage bounds");
 
   if (t->num_el > 0 && t->storage->data == NULL)
-    return (Ten_Status){TT_ERR_INVALID_STATE,
-                        "nonempty tensor has NULL storage data"};
-  if (t->offset < 0)
-    return (Ten_Status){TT_ERR_INVALID_ARG, "negative tensor offset"};
-  TensorView tmp_view = {0};
+    return status_error(TT_ERR_INVALID_STATE,
+                        "nonempty tensor has NULL storage data");
 
-  size_t byte_offset;
-  if (T_checked_mul_size((size_t)t->offset, dtype_size, &byte_offset) !=
-      RNG_OK) {
-    return (Ten_Status){TT_ERR_OVERFLOW, "offset overflow"};
-  }
+  if (t->offset < 0)
+    return status_error(TT_ERR_INVALID_ARG, "negative tensor offset");
+
+  size_t byte_offset = 0;
+
+  if (T_checked_mul_size((size_t)t->offset, dtype_size, &byte_offset) != RNG_OK)
+    return status_error(TT_ERR_OVERFLOW, "offset overflow");
+
+  TensorView tmp_view = {0};
 
   if (t->num_el > 0) {
     tmp_view.data = (unsigned char *)t->storage->data + byte_offset;
@@ -154,16 +163,17 @@ Ten_Status T_create_tensor_view(TensorView *tv, const Tensor *t) {
 
   tmp_view.rank = t->rank;
   tmp_view.dtype = t->storage->dtype;
+  tmp_view.dev = device;
 
   if (t->rank > 0) {
     memcpy(tmp_view.shape, t->shape, (size_t)t->rank * sizeof(*t->shape));
     memcpy(tmp_view.strides, t->strides, (size_t)t->rank * sizeof(*t->strides));
   }
+
   *tv = tmp_view;
 
-  return (Ten_Status){TT_OK, "success"};
+  return status_ok();
 }
-
 Ten_Status T_tensor_transpose(Tensor *dst, const Tensor *src, i32 dim0,
                               i32 dim1) {
   if (src == NULL)
@@ -596,12 +606,15 @@ Ten_Status T_tensor_reshape_view(Tensor *dst, const Tensor *src,
   /* Retain source storage and commit the view. */
   return view_commit(dst, &tmp, src);
 }
+
 Ten_Status T_tensor_contiguous_materialize(Tensor *dst, const Tensor *src) {
   if (dst == NULL || src == NULL)
     return status_error(TT_ERR_INVALID_ARG, "source or destination is NULL");
+
   if (dst->storage != NULL || dst->shape != NULL || dst->strides != NULL)
     return status_error(TT_ERR_INVALID_STATE,
                         "destination tensor is not empty");
+
   if (src->storage == NULL)
     return status_error(TT_ERR_INVALID_STATE, "source has no storage");
 
@@ -618,26 +631,41 @@ Ten_Status T_tensor_contiguous_materialize(Tensor *dst, const Tensor *src) {
   if (src->num_el < 0 || src->offset < 0)
     return status_error(TT_ERR_INVALID_ARG, "invalid source metadata");
 
-  if (!T_validate_tensor_bounds(src))
-    return status_error(TT_ERR_INVALID_ARG, "tensor exceeds storage bounds");
+  const Device source_device = src->storage->device;
+  const Device host_device = {.devtype = CPU, .id = 0};
 
-  size_t dtype_size = T_get_dtype_size(src->storage->dtype);
+  /* Validate supported source device. */
+  if (source_device.devtype != CPU && source_device.devtype != CUDA)
+    return status_error(TT_ERR_UNSUPPORTED, "unsupported source device");
+
+  if (source_device.id < 0)
+    return status_error(TT_ERR_INVALID_ARG, "invalid source device ID");
+
+  /* Validate tensor bounds against its storage. */
+  if (!T_validate_tensor_bounds(src))
+    return status_error(TT_ERR_OUT_OF_RANGE, "tensor exceeds storage bounds");
+
+  const size_t dtype_size = T_get_dtype_size(src->storage->dtype);
 
   if (dtype_size == 0)
     return status_error(TT_ERR_DTYPE_UNSUPPORTED, "unsupported dtype");
 
-  size_t n_bytes;
+  /* Validate storage size. */
+  if (src->storage->n_bytes % dtype_size != 0)
+    return status_error(TT_ERR_INVALID_STATE, "invalid source storage size");
 
   if ((u64)src->num_el > SIZE_MAX / dtype_size)
     return status_error(TT_ERR_OVERFLOW, "tensor byte size overflow");
 
-  n_bytes = (size_t)src->num_el * dtype_size;
+  const size_t n_bytes = (size_t)src->num_el * dtype_size;
+
   Tensor tmp = {0};
 
   tmp.rank = src->rank;
   tmp.num_el = src->num_el;
   tmp.offset = 0;
-  /* Allocate metadata. */
+
+  /* Allocate destination metadata. */
   if (!T_allocate_shape(&tmp, src->shape, src->rank)) {
     T_destroy_tensor(&tmp);
     return status_error(TT_ERR_NO_MEMORY, "shape allocation failed");
@@ -654,24 +682,105 @@ Ten_Status T_tensor_contiguous_materialize(Tensor *dst, const Tensor *src) {
     return status_error(TT_ERR_OVERFLOW,
                         "contiguous stride calculation failed");
   }
-  if (T_create_empty_storage(&tmp.storage, src->storage->dtype,
-                             src->storage->device, n_bytes)
-          .stype != TT_OK) {
+
+  /* Allocate destination storage on the source device. */
+  Ten_Status status = T_create_empty_storage(&tmp.storage, src->storage->dtype,
+                                             source_device, n_bytes);
+
+  if (status.stype != TT_OK) {
     T_destroy_tensor(&tmp);
-    return status_error(TT_ERR_INTERNAL, "storage allocation failed");
+    return status;
   }
 
+  /*
+   * Empty tensors require no memory access or transfer.
+   * Commit the fully constructed tensor.
+   */
+  if (n_bytes == 0) {
+    *dst = tmp;
+    return status_ok();
+  }
+
+  unsigned char *source_staging = NULL;
+  unsigned char *host_dst = NULL;
+
+  const unsigned char *host_src = NULL;
+
+  /*
+   * Stage source storage to host memory when necessary.
+   */
+  if (source_device.devtype == CPU) {
+    if (src->storage->data == NULL) {
+      status =
+          status_error(TT_ERR_INVALID_STATE, "source storage data is NULL");
+      goto materialize_cleanup;
+    }
+
+    host_src = (const unsigned char *)src->storage->data;
+  } else {
+    source_staging = malloc(src->storage->n_bytes);
+
+    if (source_staging == NULL) {
+      status =
+          status_error(TT_ERR_NO_MEMORY, "source staging allocation failed");
+      goto materialize_cleanup;
+    }
+
+    status = storage_copy(source_staging, host_device, src->storage->data,
+                          source_device, src->storage->n_bytes);
+
+    if (status.stype != TT_OK)
+      goto materialize_cleanup;
+
+    host_src = source_staging;
+  }
+
+  /*
+   * Allocate contiguous host destination.
+   */
+  host_dst = malloc(n_bytes);
+
+  if (host_dst == NULL) {
+    status =
+        status_error(TT_ERR_NO_MEMORY, "destination staging allocation failed");
+    goto materialize_cleanup;
+  }
+
+  /*
+   * Gather logical tensor elements into contiguous host memory.
+   */
   i64 indices[TT_MAX_RANK] = {0};
 
   for (i64 n = 0; n < src->num_el; ++n) {
     i64 src_offset = src->offset;
 
-    for (i32 d = 0; d < src->rank; ++d)
-      src_offset += indices[d] * src->strides[d];
+    for (i32 d = 0; d < src->rank; ++d) {
+      i64 delta;
 
-    memcpy((char *)tmp.storage->data + (size_t)n * dtype_size,
-           (char *)src->storage->data + (size_t)src_offset * dtype_size,
-           dtype_size);
+      if (T_check_i64_mul(indices[d], src->strides[d], &delta) != RNG_OK ||
+          T_check_i64_add(src_offset, delta, &src_offset) != RNG_OK) {
+        status =
+            status_error(TT_ERR_OVERFLOW, "source element offset overflow");
+        goto materialize_cleanup;
+      }
+    }
+
+    size_t src_byte_offset;
+    size_t dst_byte_offset;
+
+    if (T_checked_mul_size((size_t)src_offset, dtype_size, &src_byte_offset) !=
+            RNG_OK ||
+        T_checked_mul_size((size_t)n, dtype_size, &dst_byte_offset) != RNG_OK) {
+      status =
+          status_error(TT_ERR_OVERFLOW, "materialization byte offset overflow");
+      goto materialize_cleanup;
+    }
+
+    /*
+     * Bounds are guaranteed by T_validate_tensor_bounds()
+     * and the validated multidimensional index traversal.
+     */
+    memcpy(host_dst + dst_byte_offset, host_src + src_byte_offset, dtype_size);
 
     /* Increment multidimensional indices. */
     for (i32 d = src->rank - 1; d >= 0; --d) {
@@ -684,13 +793,33 @@ Ten_Status T_tensor_contiguous_materialize(Tensor *dst, const Tensor *src) {
     }
   }
 
+  /*
+   * Transfer contiguous result to destination device.
+   */
+  status = storage_copy(tmp.storage->data, tmp.storage->device, host_dst,
+                        host_device, n_bytes);
+
+  if (status.stype != TT_OK)
+    goto materialize_cleanup;
+
+  /* Release staging buffers and commit ownership. */
+  free(host_dst);
+  free(source_staging);
+
   *dst = tmp;
   return status_ok();
+
+materialize_cleanup:
+  free(host_dst);
+  free(source_staging);
+  T_destroy_tensor(&tmp);
+
+  return status;
 }
 
 Ten_Status T_tensor_slice(Tensor *dst, const Tensor *src, i32 dim, i64 start,
                           i64 end, i64 step) {
-  // Validate source.
+  /* Validate source. */
   if (src == NULL)
     return status_error(TT_ERR_INVALID_ARG, "source tensor is NULL");
 
@@ -710,7 +839,22 @@ Ten_Status T_tensor_slice(Tensor *dst, const Tensor *src, i32 dim, i64 start,
   if (!T_is_dtype_valid(src->storage->dtype))
     return status_error(TT_ERR_DTYPE_UNSUPPORTED, "invalid source data type");
 
-  // Validate destination.
+  if (src->num_el < 0 || src->offset < 0)
+    return status_error(TT_ERR_INVALID_STATE, "invalid source tensor metadata");
+
+  /* Validate source device. No data access is performed here. */
+  if (src->storage->device.devtype != CPU &&
+      src->storage->device.devtype != CUDA)
+    return status_error(TT_ERR_UNSUPPORTED, "unsupported source device");
+
+  if (src->storage->device.id < 0)
+    return status_error(TT_ERR_INVALID_ARG, "invalid source device ID");
+
+  if (!T_validate_tensor_bounds(src))
+    return status_error(TT_ERR_OUT_OF_RANGE,
+                        "source tensor exceeds storage bounds");
+
+  /* Validate destination. */
   Ten_Status status = T_validate_new_tensor(
       dst, src->storage->dtype, src->shape, src->rank, src->storage->device);
 
@@ -723,9 +867,10 @@ Ten_Status T_tensor_slice(Tensor *dst, const Tensor *src, i32 dim, i64 start,
   if (step == (-I64_MAX - 1))
     return status_error(TT_ERR_INVALID_ARG, "slice step overflow");
 
-  i64 dim_size = src->shape[dim];
+  const i64 dim_size = src->shape[dim];
   i64 length = 0;
 
+  /* Calculate sliced dimension length. */
   if (step > 0) {
     if (start < 0 || start > dim_size || end < 0 || end > dim_size ||
         start > end)
@@ -733,6 +878,7 @@ Ten_Status T_tensor_slice(Tensor *dst, const Tensor *src, i32 dim, i64 start,
 
     if (start < end)
       length = 1 + (end - 1 - start) / step;
+
   } else {
     if (start < -1 || start >= dim_size || end < -1 || end >= dim_size ||
         start <= end)
@@ -743,20 +889,23 @@ Ten_Status T_tensor_slice(Tensor *dst, const Tensor *src, i32 dim, i64 start,
   }
 
   Tensor tmp = {0};
+
   tmp.rank = src->rank;
   tmp.offset = src->offset;
 
   status = view_alloc(&tmp, src->shape);
+
   if (status.stype != TT_OK)
     return status;
 
-  memcpy(tmp.strides, src->strides, sizeof(i64) * src->rank);
+  memcpy(tmp.strides, src->strides, sizeof(i64) * (size_t)src->rank);
 
   tmp.shape[dim] = length;
 
+  /* Calculate new stride. */
   if (T_check_i64_mul(src->strides[dim], step, &tmp.strides[dim]) != RNG_OK) {
     T_destroy_tensor(&tmp);
-    return status_error(TT_ERR_INVALID_ARG, "slice stride overflow");
+    return status_error(TT_ERR_OVERFLOW, "slice stride overflow");
   }
 
   if (length > 0) {
@@ -765,7 +914,7 @@ Ten_Status T_tensor_slice(Tensor *dst, const Tensor *src, i32 dim, i64 start,
     if (T_check_i64_mul(start, src->strides[dim], &offset_delta) != RNG_OK ||
         T_check_i64_add(src->offset, offset_delta, &tmp.offset) != RNG_OK) {
       T_destroy_tensor(&tmp);
-      return status_error(TT_ERR_INVALID_ARG, "slice offset overflow");
+      return status_error(TT_ERR_OVERFLOW, "slice offset overflow");
     }
   }
 
@@ -774,7 +923,7 @@ Ten_Status T_tensor_slice(Tensor *dst, const Tensor *src, i32 dim, i64 start,
   for (i32 i = 0; i < tmp.rank; ++i) {
     if (T_check_i64_mul(tmp.num_el, tmp.shape[i], &tmp.num_el) != RNG_OK) {
       T_destroy_tensor(&tmp);
-      return status_error(TT_ERR_INVALID_ARG, "element count overflow");
+      return status_error(TT_ERR_OVERFLOW, "slice element count overflow");
     }
   }
 
