@@ -1184,7 +1184,7 @@ Ten_Status T_create_tensor(Tensor *t, const void *input_data,
   if ((uint64_t)tmp.num_el > SIZE_MAX / dtype_size)
     return status_error(TT_ERR_OVERFLOW, "tensor byte size overflow");
 
-  const size_t n_bytes = dtype_size * (size_t)tmp.num_el;
+  const size_t n_bytes = (size_t)tmp.num_el * dtype_size;
 
   if (n_bytes > 0 && input_data == NULL)
     return status_error(TT_ERR_INVALID_ARG, "input data is NULL");
@@ -1196,14 +1196,8 @@ Ten_Status T_create_tensor(Tensor *t, const void *input_data,
     return status;
   }
 
-  /*
-   * Initialization input is host memory.
-   * Destination storage may reside on CPU or CUDA.
-   */
-  const Device host_device = {.devtype = CPU, .id = 0};
-
-  status = T_create_tensor_storage(&tmp.storage, input_data, i_dtype,
-                                   host_device, dev, n_bytes);
+  status = T_create_tensor_storage(&tmp.storage, input_data, i_dtype, dev, dev,
+                                   n_bytes);
 
   if (status.stype != TT_OK) {
     release_tensor(&tmp);
