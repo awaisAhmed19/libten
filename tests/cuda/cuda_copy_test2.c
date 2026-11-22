@@ -12,6 +12,9 @@
 
 #include "backend/cpu/ten_memory.h"
 #include "backend/cpu/ten_ops.h"
+#ifdef TEN_TEST_HAS_CUDA
+#include "backend/cuda/ten_memory.h"
+#endif
 #include "internal/ten_backend.h"
 #include "ten/ten_status.h"
 #include "ten/ten_tensor.h"
@@ -98,7 +101,9 @@ static void reset_injection(void) {
 
 static Device cpu_device(void) { return (Device){.devtype = CPU, .id = 0}; }
 
+#ifdef TEN_TEST_CUDA_ONLY
 static Device cuda_device(void) { return (Device){.devtype = CUDA, .id = 0}; }
+#endif
 
 static int tensor_is_empty(const Tensor *tensor) {
   return tensor != NULL && tensor->storage == NULL && tensor->shape == NULL &&
@@ -106,6 +111,7 @@ static int tensor_is_empty(const Tensor *tensor) {
          tensor->num_el == 0;
 }
 
+#ifndef TEN_TEST_CUDA_ONLY
 static int check_no_live_allocations(void) {
   if (live_allocs == 0)
     return 0;
@@ -114,8 +120,9 @@ static int check_no_live_allocations(void) {
           live_allocs);
   return 1;
 }
+#endif
 
-/* Shared success-case runner for CPU and CUDA. */
+/* Shared success-case runner compiled into the CPU and CUDA test binaries. */
 typedef enum { CASE_CONTIGUOUS, CASE_TRANSPOSED, CASE_SLICED } CaseKind;
 
 static int run_case(Device dev, CaseKind kind) {
@@ -135,6 +142,9 @@ static int run_case(Device dev, CaseKind kind) {
   Tensor dst = {0};
   const Tensor *source = &src;
   int result = 0;
+  void *device_input = NULL;
+  const void *tensor_input = data;
+  const size_t input_bytes = (kind == CASE_SLICED ? 12u : 6u) * sizeof(float);
 
   if (kind == CASE_SLICED) {
     for (i32 i = 0; i < 12; ++i)
@@ -171,7 +181,41 @@ static int run_case(Device dev, CaseKind kind) {
     }
   }
 
-  CUDA_TEST_STATUS(T_create_tensor(&src, data, F32, shape, 2, dev), TT_OK);
+  /*
+   * T_create_tensor() expects input_data to reside on the device supplied in
+   * `dev`. Stage the host fixture explicitly for CUDA instead of passing a
+   * host pointer as though it were device memory.
+   */
+  if (dev.devtype == CUDA) {
+#ifdef TEN_TEST_HAS_CUDA
+    CUDA_TEST_STATUS(cuda_allocate(&device_input, input_bytes), TT_OK);
+    CUDA_TEST_CHECK(device_input != NULL);
+    CUDA_TEST_STATUS(
+        cuda_copy(device_input, data, input_bytes, TEN_COPY_HOST_TO_DEVICE),
+        TT_OK);
+    tensor_input = device_input;
+#else
+    fprintf(stderr, "FAIL: CUDA case compiled without CUDA support\n");
+    result = 1;
+    goto cleanup;
+#endif
+  }
+
+  CUDA_TEST_STATUS(T_create_tensor(&src, tensor_input, F32, shape, 2, dev),
+                   TT_OK);
+
+  /* The tensor constructor owns its copy; the staging buffer is temporary. */
+#ifdef TEN_TEST_HAS_CUDA
+  if (device_input != NULL) {
+    Ten_Status free_status = cuda_deallocate(&device_input);
+    if (free_status.stype != TT_OK) {
+      fprintf(stderr, "FAIL: could not release CUDA input staging buffer: %s\n",
+              free_status.msg ? free_status.msg : "no message");
+      result = 1;
+      goto cleanup;
+    }
+  }
+#endif
 
   if (kind == CASE_TRANSPOSED) {
     CUDA_TEST_STATUS(T_tensor_transpose(&view, &src, 0, 1), TT_OK);
@@ -223,6 +267,10 @@ static int run_case(Device dev, CaseKind kind) {
   CUDA_TEST_CHECK(!tensor_is_empty(&dst));
 
 cleanup:
+#ifdef TEN_TEST_HAS_CUDA
+  if (device_input != NULL)
+    (void)cuda_deallocate(&device_input);
+#endif
   T_destroy_tensor(&dst);
   T_destroy_tensor(&view);
   T_destroy_tensor(&src);
@@ -235,6 +283,7 @@ cleanup:
   return result;
 }
 
+#ifndef TEN_TEST_CUDA_ONLY
 static int test_cpu_contiguous(void) {
   const i64 shape[] = {2, 3};
   const float data[] = {1, 2, 3, 4, 5, 6};
@@ -291,54 +340,22 @@ cleanup:
   return result;
 }
 
-#ifdef TEN_TEST_HAS_CUDA
-static bool cuda_device_available(void) {
-  int count = 0;
-  cudaError_t err = cudaGetDeviceCount(&count);
+#endif /* !TEN_TEST_CUDA_ONLY */
 
-  if (err != cudaSuccess || count == 0) {
-    (void)cudaGetLastError();
-    return false;
-  }
-
-  err = cudaSetDevice(0);
-  if (err != cudaSuccess) {
-    (void)cudaGetLastError();
-    return false;
-  }
-
-  return true;
-}
-#endif
-
-static int run_cuda_case(CaseKind kind, const char *name) {
-#ifdef TEN_TEST_HAS_CUDA
-  if (!cuda_device_available()) {
-    fprintf(stderr, "[SKIP] %s: no usable CUDA device\n", name);
-    return 0;
-  }
-
+#ifdef TEN_TEST_CUDA_ONLY
+static int run_cuda_case(CaseKind kind) {
   reset_injection();
   return run_case(cuda_device(), kind);
-#else
-  (void)kind;
-  fprintf(stderr, "[SKIP] %s: CUDA not compiled\n", name);
-  return 0;
+}
+
+static int test_cuda_contiguous(void) { return run_cuda_case(CASE_CONTIGUOUS); }
+
+static int test_cuda_transposed(void) { return run_cuda_case(CASE_TRANSPOSED); }
+
+static int test_cuda_sliced(void) { return run_cuda_case(CASE_SLICED); }
 #endif
-}
 
-static int test_cuda_contiguous(void) {
-  return run_cuda_case(CASE_CONTIGUOUS, "cuda contiguous");
-}
-
-static int test_cuda_transposed(void) {
-  return run_cuda_case(CASE_TRANSPOSED, "cuda transposed");
-}
-
-static int test_cuda_sliced(void) {
-  return run_cuda_case(CASE_SLICED, "cuda sliced");
-}
-
+#ifndef TEN_TEST_CUDA_ONLY
 static int test_empty_tensor(void) {
   const i64 shape[] = {2, 0, 3};
   Tensor src = {0};
@@ -539,15 +556,24 @@ cleanup:
   return result;
 }
 
+#endif /* !TEN_TEST_CUDA_ONLY */
+
 int main(void) {
-  if (test_cpu_contiguous() != 0 || test_cpu_transposed() != 0 ||
-      test_cpu_sliced() != 0 || test_cuda_contiguous() != 0 ||
-      test_cuda_transposed() != 0 || test_cuda_sliced() != 0 ||
-      test_empty_tensor() != 0 || test_invalid_cuda_device_id() != 0 ||
-      test_null_source_data() != 0 ||
-      test_destination_allocation_failure() != 0 || test_copy_failure() != 0) {
+#ifdef TEN_TEST_CUDA_ONLY
+  int device_status = ten_cuda_test_require_device();
+  if (device_status != 0)
+    return device_status;
+
+  if (test_cuda_contiguous() != 0 || test_cuda_transposed() != 0 ||
+      test_cuda_sliced() != 0)
     return EXIT_FAILURE;
-  }
+#else
+  if (test_cpu_contiguous() != 0 || test_cpu_transposed() != 0 ||
+      test_cpu_sliced() != 0 || test_empty_tensor() != 0 ||
+      test_invalid_cuda_device_id() != 0 || test_null_source_data() != 0 ||
+      test_destination_allocation_failure() != 0 || test_copy_failure() != 0)
+    return EXIT_FAILURE;
+#endif
 
   printf("PASS: %d checks\n", tests_run);
   return EXIT_SUCCESS;

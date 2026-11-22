@@ -204,6 +204,14 @@ if(BUILD_TESTING)
     target_link_libraries(ten_checked_tests PRIVATE CUDA::cudart)
   endif()
 
+  # * Contiguous materialization tests - CPU coverage is always built and
+  #   registered, including CPU-only builds.
+  add_executable(ten_materialize_cpu_tests tests/cuda/cuda_copy_test2.c)
+  ten_configure_test(ten_materialize_cpu_tests)
+  target_include_directories(ten_materialize_cpu_tests
+                             PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/cuda)
+  add_test(NAME materialize_cpu COMMAND ten_materialize_cpu_tests)
+
   # * CUDA memory and copy tests -
 
   if(TEN_CUDA_AVAILABLE)
@@ -226,7 +234,9 @@ if(BUILD_TESTING)
 
     ten_add_cuda_test(cuda_memory cuda_memory_test.c)
     ten_add_cuda_test(cuda_copy cuda_copy_test.c)
-    ten_add_cuda_test(cuda_copy2 cuda_copy_test2.c)
+    ten_add_cuda_test(materialize_cuda cuda_copy_test2.c)
+    target_compile_definitions(ten_materialize_cuda_tests
+                               PRIVATE TEN_TEST_CUDA_ONLY=1)
   endif()
 
 endif()

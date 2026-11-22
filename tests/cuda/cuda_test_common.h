@@ -2,9 +2,10 @@
 #define TEN_CUDA_TEST_COMMON_H
 
 #include "ten/ten_status.h"
-#include <cuda_runtime.h>
-#include <cuda_runtime_api.h>
 #include <stdio.h>
+
+#ifdef TEN_TEST_HAS_CUDA
+#include <cuda_runtime.h>
 
 /*
  * Return 0 when a usable CUDA device is available, or 77 when the test
@@ -32,6 +33,7 @@ static int ten_cuda_test_require_device(void) {
 
   return 0;
 }
+#endif /* TEN_TEST_HAS_CUDA */
 
 #define CUDA_TEST_CHECK(condition)                                             \
   do {                                                                         \
@@ -54,4 +56,4 @@ static int ten_cuda_test_require_device(void) {
     }                                                                          \
   } while (0)
 
-#endif
+#endif /* TEN_CUDA_TEST_COMMON_H */
