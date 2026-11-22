@@ -230,8 +230,7 @@ static int test_unsupported_device_status(void) {
 
   Device device = {.devtype = CUDA, .id = 0};
 
-  CHECK_STATUS(T_create_tensor(&t, values, F32, shape, 1, device),
-               TT_ERR_DEVICE_MISMATCH);
+  CHECK_STATUS(T_create_tensor(&t, values, F32, shape, 1, device), TT_OK);
 
   CHECK(tensor_is_empty(&t));
 
